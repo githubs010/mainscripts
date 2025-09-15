@@ -305,43 +305,25 @@
     await loadTypoLibrary();
     runAllComparisons();
     const matchedSheetRow = await processGoogleSheetData();
-
     if (!matchedSheetRow) {
         return;
     }
-
-    // --- Excel-like Arrangement: Map Google Sheet Columns to Form Fields ---
-    // This section maps columns from your Google Sheet to the dropdown fields on the page.
-    // 'id' is the 'aria-labelledby' of the input field.
-    // 'sheetColumn' is the exact header name in your Google Sheet.
-    // 'defaultValue' is used if the sheet cell is empty.
     const dropdownConfigurations = [
-        { id: "vs1__combobox",  sheetColumn: "Vertical Name", defaultValue: "" },
-        { id: "vs2__combobox",  sheetColumn: "vs2",             defaultValue: "" },
-        { id: "vs3__combobox",  sheetColumn: "vs3",             defaultValue: "" },
-        { id: "vs4__combobox",  sheetColumn: "vs4",             defaultValue: "No Error" },
-        { id: "vs5__combobox",  sheetColumn: "vs5",             defaultValue: "No Change" },
-        { id: "vs6__combobox",  sheetColumn: "vs6",             defaultValue: "No Change" },
-        { id: "vs7__combobox",  sheetColumn: "vs7",             defaultValue: "No Change" }, // Field added as requested
-        { id: "vs8__combobox",  sheetColumn: "vs8",             defaultValue: "Yes" },
-        { id: "vs10__combobox", sheetColumn: "vs10",            defaultValue: "Yes" }
+        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() },
+        { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
+        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() },
+        { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
+        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() || "No Change" },
+        { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() || "No Change" },
+        { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() || "Yes" },
+        { id: "vs10__combobox", value: matchedSheetRow?.vs10?.trim() || "Yes" }
     ];
-
-    for (const config of dropdownConfigurations) {
-        // Get the value from the matched sheet row using the column name
-        const valueFromSheet = matchedSheetRow[config.sheetColumn]?.trim();
-        // Use the value from the sheet, or fall back to the defined default value
-        const valueToFill = valueFromSheet || config.defaultValue;
-        
-        if (valueToFill) { // Only try to fill if there's a value
-             await fillDropdown(config.id, valueToFill);
-        }
+    for (const { id, value } of dropdownConfigurations) {
+        await fillDropdown(id, value);
     }
-
     if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
         updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
     }
-
     if (domCache.cleanedItemNameTextarea) {
         await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
     }
