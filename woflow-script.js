@@ -221,7 +221,7 @@
             if (!sheetResponse.ok) throw new Error(`HTTP error! status: ${sheetResponse.status}`);
             const sheetData = await sheetResponse.json();
             for (const row of sheetData) {
-                const keywords = row.Keyword?.split(",").map(kw => normalizeText(kw.trim())).filter(Boolean);
+                const keywords = getValueFromRow(row, "Keyword")?.split(",").map(kw => normalizeText(kw.trim())).filter(Boolean);
                 if (!keywords || keywords.length === 0) continue;
                 for (const text of divContentMap.values()) {
                     for (const keyword of keywords) {
@@ -235,6 +235,13 @@
         } catch (error) {
             return null;
         }
+    }
+    
+    // NEW: Helper function to get value from a row case-insensitively
+    function getValueFromRow(row, columnName) {
+        if (!row || !columnName) return undefined;
+        const correctKey = Object.keys(row).find(key => key.toLowerCase() === columnName.toLowerCase());
+        return correctKey ? row[correctKey] : undefined;
     }
 
     async function fillDropdown(comboboxId, valueToSelect) {
@@ -310,11 +317,6 @@
         return;
     }
 
-    // --- Excel-like Arrangement: Map Google Sheet Columns to Form Fields ---
-    // This section maps columns from your Google Sheet to the dropdown fields on the page.
-    // 'id' is the 'aria-labelledby' of the input field.
-    // 'sheetColumn' is the exact header name in your Google Sheet.
-    // 'defaultValue' is used if the sheet cell is empty.
     const dropdownConfigurations = [
         { id: "vs1__combobox",  sheetColumn: "Vertical Name", defaultValue: "" },
         { id: "vs2__combobox",  sheetColumn: "vs2",             defaultValue: "" },
@@ -322,18 +324,17 @@
         { id: "vs4__combobox",  sheetColumn: "vs4",             defaultValue: "No Error" },
         { id: "vs5__combobox",  sheetColumn: "vs5",             defaultValue: "No Change" },
         { id: "vs6__combobox",  sheetColumn: "vs6",             defaultValue: "No Change" },
-        { id: "vs7__combobox",  sheetColumn: "vs7",             defaultValue: "No Change" }, // Field added as requested
+        { id: "vs7__combobox",  sheetColumn: "vs7",             defaultValue: "No Change" },
         { id: "vs8__combobox",  sheetColumn: "vs8",             defaultValue: "Yes" },
         { id: "vs10__combobox", sheetColumn: "vs10",            defaultValue: "Yes" }
     ];
 
     for (const config of dropdownConfigurations) {
-        // Get the value from the matched sheet row using the column name
-        const valueFromSheet = matchedSheetRow[config.sheetColumn]?.trim();
-        // Use the value from the sheet, or fall back to the defined default value
+        // UPDATED: Use the case-insensitive helper function
+        const valueFromSheet = getValueFromRow(matchedSheetRow, config.sheetColumn)?.trim();
         const valueToFill = valueFromSheet || config.defaultValue;
         
-        if (valueToFill) { // Only try to fill if there's a value
+        if (valueToFill) {
              await fillDropdown(config.id, valueToFill);
         }
     }
