@@ -315,7 +315,7 @@
         { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
         { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() || "No Change" },
         { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() || "No Change" },
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" },
+        { id: "vs7__listbox", value: matchedSheetRow?.vs7?.trim() || "Yes" },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
     for (const { id, value } of dropdownConfigurations) {
