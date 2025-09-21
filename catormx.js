@@ -1,4 +1,26 @@
-javascript: (function() {
+(async function() {
+    // --- CONFIGURATION ---
+    const SHEET_URL = "https://opensheet.elk.sh/188552daH24yAiXUux5aHvqBNWOPRZPJeve2Nd6acRBA/Sheet1";
+    const FALLBACK_ADMIN = 'prasad'; // A default user if the sheet fails to load
+
+    // --- 🔑 START: DYNAMIC ACCESS CONTROL ---
+    async function getAuthorizedUsers(sheetUrl) {
+        try {
+            // Assumes your Google Sheet has a second tab (sheet) named "Users"
+            const usersSheetUrl = sheetUrl.replace('/Sheet1', '/Users');
+            const response = await fetch(usersSheetUrl);
+            if (!response.ok) {
+                console.error("Failed to fetch Users sheet, using fallback.");
+                return [FALLBACK_ADMIN];
+            }
+            const users = await response.json();
+            // Assumes the "Users" sheet has a column header named "username"
+            return users.map(user => user.username.toLowerCase()).filter(Boolean);
+        } catch (e) {
+            console.error("Error fetching users, using fallback.", e);
+            return [FALLBACK_ADMIN];
+        }
+    }
   const openSearch = (text) => {
     if (!text || text.trim() === "") {
       return;
