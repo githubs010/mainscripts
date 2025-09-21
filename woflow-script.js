@@ -331,6 +331,7 @@
         { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" },
         { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
+        { id: "vs9__combobox", value: matchedSheetRow?.vs9?.trim() || "Yes" }
     ];
     for (const { id, value } of dropdownConfigurations) {
         await fillDropdown(id, value);
