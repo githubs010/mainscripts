@@ -1,4 +1,17 @@
 (async function() {
+    {
+    // --- 🔑 START: ACCESS CONTROL ---
+    // vvv EDIT THIS LIST TO ADD OR REMOVE USERS vvv
+    const AUTHORIZED_USERS = ['prasad', 'venu', 'vinod', 'viju'];
+    // ^^^ EDIT THIS LIST TO ADD OR REMOVE USERS ^^^
+    const currentUser = window.WoflowAccessUser;
+
+    if (!currentUser || !AUTHORIZED_USERS.includes(currentUser.toLowerCase())) {
+        alert('⛔ Access Denied. Please contact the administrator.');
+        return;
+    }
+    // --- END: ACCESS CONTROL ---
+        
     // --- OPTIMIZATION: Configuration and Constants ---
     const SHEET_URL = "https://opensheet.elk.sh/188552daH24yAiXUux5aHvqBNWOPRZPJeve2Nd6acRBA/Sheet1";
     const TYPO_CONFIG = {
