@@ -1,8 +1,28 @@
 (async function() {
-    // --- 🔑 START: ACCESS CONTROL ---
-    // vvv EDIT THIS LIST TO ADD OR REMOVE USERS vvv
-    const AUTHORIZED_USERS = ['prasad', 'venu', 'vinod', 'viju'];
-    // ^^^ EDIT THIS LIST TO ADD OR REMOVE USERS ^^^
+    // --- CONFIGURATION ---
+    const SHEET_URL = "https://opensheet.elk.sh/188552daH24yAiXUux5aHvqBNWOPRZPJeve2Nd6acRBA/Sheet1";
+    const FALLBACK_ADMIN = 'prasad'; // A default user if the sheet fails to load
+
+    // --- 🔑 START: DYNAMIC ACCESS CONTROL ---
+    async function getAuthorizedUsers(sheetUrl) {
+        try {
+            // Assumes your Google Sheet has a second tab (sheet) named "Users"
+            const usersSheetUrl = sheetUrl.replace('/Sheet1', '/Users');
+            const response = await fetch(usersSheetUrl);
+            if (!response.ok) {
+                console.error("Failed to fetch Users sheet, using fallback.");
+                return [FALLBACK_ADMIN];
+            }
+            const users = await response.json();
+            // Assumes the "Users" sheet has a column header named "username"
+            return users.map(user => user.username.toLowerCase()).filter(Boolean);
+        } catch (e) {
+            console.error("Error fetching users, using fallback.", e);
+            return [FALLBACK_ADMIN];
+        }
+    }
+
+    const AUTHORIZED_USERS = await getAuthorizedUsers(SHEET_URL);
     const currentUser = window.WoflowAccessUser;
 
     if (!currentUser || !AUTHORIZED_USERS.includes(currentUser.toLowerCase())) {
@@ -12,8 +32,7 @@
     // --- END: ACCESS CONTROL ---
 
 
-    // --- OPTIMIZATION: Configuration and Constants ---
-    const SHEET_URL = "https://opensheet.elk.sh/188552daH24yAiXUux5aHvqBNWOPRZPJeve2Nd6acRBA/Sheet1";
+    // --- OPTIMIZATION: Constants ---
     const TYPO_CONFIG = {
         libURL: 'https://cdn.jsdelivr.net/npm/typo-js@1.2.1/typo.js',
         dictionaries: [{ name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' }],
@@ -39,7 +58,7 @@
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li'
     };
 
-    // --- OPTIMIZATION: Global State and Caching ---
+    // --- Global State and Caching ---
     let isUpdatingComparison = false;
     let isHighlightingEnabled = true;
     const dictionaries = [];
@@ -113,7 +132,7 @@
             });
             if (dictionaries.length === 0) dictionaries.push(...(await Promise.all(dictPromises)));
         } catch (error) {
-            // Errors are intentionally not logged to the console.
+            console.error("Could not load Typo library.", error);
         }
     }
 
@@ -246,6 +265,9 @@
             }
             return null;
         } catch (error) {
+            // Provide better feedback to the user
+            alert('❌ Could not connect to the Google Sheet. Please check your connection and try again.');
+            console.error('Google Sheet fetch error:', error);
             return null;
         }
     }
@@ -331,7 +353,6 @@
         { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" },
         { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
-        { id: "vs9__combobox", value: matchedSheetRow?.vs9?.trim() || "Yes" }
     ];
     for (const { id, value } of dropdownConfigurations) {
         await fillDropdown(id, value);
