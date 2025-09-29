@@ -274,7 +274,7 @@
         });
     }
 
-    // --- ⭐ START: FINAL ROBUST LISTENER LOGIC ---
+    // --- ⭐ START: FINAL, ROBUST LISTENER ATTACHMENT LOGIC ---
     function runAllComparisonsAndAttachListener() {
         if (isUpdatingComparison) return;
 
@@ -284,8 +284,7 @@
         if (cleanedItemNameTextarea) {
             runSmartComparison();
 
-            // This block is now the key to fixing the live-edit issue.
-            // It robustly ensures the listener is always attached to the current textarea.
+            // This block is the definitive fix. It guarantees the listener is always active.
             if (!cleanedItemNameTextarea.__listenerAttached) {
                 let debounceTimer;
                 cleanedItemNameTextarea.addEventListener('input', () => {
@@ -298,7 +297,7 @@
             }
         }
     }
-    // --- ⭐ END: FINAL ROBUST LISTENER LOGIC ---
+    // --- ⭐ END: FINAL, ROBUST LISTENER ATTACHMENT LOGIC ---
 
     function closeAndResetUI() {
         const middleBottomBtn = document.getElementById('middle-bottom-close-button');
