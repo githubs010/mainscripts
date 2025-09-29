@@ -34,7 +34,6 @@
         dictionaries: [
             { name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' },
             { name: 'en_CA', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-ca@2.0.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-ca@2.0.0/index.dic' },
-            // ⭐ FIXED: The version number was removed to always fetch the latest stable Australian dictionary
             { name: 'en_AU', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au/index.dic' }
         ],
         ignoreLength: 3
@@ -229,12 +228,13 @@
         }
 
         const allSuggestions = [...diffSuggestions, ...getSpellingSuggestions(textareaWords)];
-        const newSuggestionKeys = new Set(allSuggestions.map(s => `${s.type}-${s.from || s.word}-${s.to || ''}`));
+        const newSuggestionKeys = new Set(allSuggestions.map(sugg => `${sugg.type}-${sugg.from || sugg.word}-${sugg.to || ''}`));
         
         suggestionContainer.querySelectorAll('button[data-sugg-key]').forEach(btn => { if (!newSuggestionKeys.has(btn.dataset.suggKey)) btn.remove(); });
         
         allSuggestions.forEach(sugg => {
-            const suggKey = `${sugg.type}-${s.from || s.word}-${s.to || ''}`;
+            // ⭐ FIXED: Changed all instances of `s` to `sugg` to fix the ReferenceError
+            const suggKey = `${sugg.type}-${sugg.from || sugg.word}-${sugg.to || ''}`;
             if (suggestionContainer.querySelector(`[data-sugg-key="${suggKey}"]`)) return;
 
             const btn = document.createElement('button');
