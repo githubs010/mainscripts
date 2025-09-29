@@ -233,7 +233,6 @@
         suggestionContainer.querySelectorAll('button[data-sugg-key]').forEach(btn => { if (!newSuggestionKeys.has(btn.dataset.suggKey)) btn.remove(); });
         
         allSuggestions.forEach(sugg => {
-            // ⭐ FIXED: Changed all instances of `s` to `sugg` to fix the ReferenceError
             const suggKey = `${sugg.type}-${sugg.from || sugg.word}-${sugg.to || ''}`;
             if (suggestionContainer.querySelector(`[data-sugg-key="${suggKey}"]`)) return;
 
@@ -275,6 +274,7 @@
         });
     }
 
+    // --- ⭐ START: FINAL ROBUST LISTENER LOGIC ---
     function runAllComparisonsAndAttachListener() {
         if (isUpdatingComparison) return;
 
@@ -284,6 +284,8 @@
         if (cleanedItemNameTextarea) {
             runSmartComparison();
 
+            // This block is now the key to fixing the live-edit issue.
+            // It robustly ensures the listener is always attached to the current textarea.
             if (!cleanedItemNameTextarea.__listenerAttached) {
                 let debounceTimer;
                 cleanedItemNameTextarea.addEventListener('input', () => {
@@ -296,6 +298,7 @@
             }
         }
     }
+    // --- ⭐ END: FINAL ROBUST LISTENER LOGIC ---
 
     function closeAndResetUI() {
         const middleBottomBtn = document.getElementById('middle-bottom-close-button');
