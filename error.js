@@ -34,7 +34,8 @@
         dictionaries: [
             { name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' },
             { name: 'en_CA', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-ca@2.0.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-ca@2.0.0/index.dic' },
-            { name: 'en_AU', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au@2.0.1/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au@2.0.1/index.dic' }
+            // ⭐ FIXED: The version number was removed to always fetch the latest stable Australian dictionary
+            { name: 'en_AU', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au/index.dic' }
         ],
         ignoreLength: 3
     };
@@ -62,7 +63,7 @@
     let isUpdatingComparison = false;
     let isHighlightingEnabled = true;
     const dictionaries = [];
-    const domCache = { allDivs: [] }; // Textarea is now handled dynamically
+    const domCache = { allDivs: [] };
 
     // --- UTILITY FUNCTIONS ---
     const normalizeText = (text) => text?.replace(/&amp;/g, "&").replace(/\s+/g, " ").trim().toLowerCase();
@@ -137,7 +138,7 @@
         }
     }
 
-    function getSpellingSuggestions(words, cleanedItemNameTextarea) {
+    function getSpellingSuggestions(words) {
         if (dictionaries.length === 0) return [];
         const suggestions = [];
         const checkedWords = new Set();
@@ -221,9 +222,13 @@
         textareaWordMap.forEach((data) => { if (!data.used) diffSuggestions.push({ type: 'remove', word: data.word }); });
 
         const missingWords = diffSuggestions.filter(s => s.type === 'add').map(s => s.word);
-        originalBTag.innerHTML = escapeHtml(originalValue).replace(new RegExp(`\\b(${missingWords.map(regexEscape).join('|')})\\b`, 'gi'), (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`);
+        if(missingWords.length > 0) {
+            originalBTag.innerHTML = escapeHtml(originalValue).replace(new RegExp(`\\b(${missingWords.map(regexEscape).join('|')})\\b`, 'gi'), (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`);
+        } else {
+            originalBTag.innerHTML = escapeHtml(originalValue);
+        }
 
-        const allSuggestions = [...diffSuggestions, ...getSpellingSuggestions(textareaWords, cleanedItemNameTextarea)];
+        const allSuggestions = [...diffSuggestions, ...getSpellingSuggestions(textareaWords)];
         const newSuggestionKeys = new Set(allSuggestions.map(s => `${s.type}-${s.from || s.word}-${s.to || ''}`));
         
         suggestionContainer.querySelectorAll('button[data-sugg-key]').forEach(btn => { if (!newSuggestionKeys.has(btn.dataset.suggKey)) btn.remove(); });
@@ -270,19 +275,15 @@
         });
     }
 
-    // --- ⭐ START: ROBUST LISTENER ATTACHMENT LOGIC ---
     function runAllComparisonsAndAttachListener() {
         if (isUpdatingComparison) return;
 
-        // Re-cache all divs on every significant page change
         domCache.allDivs = [...document.querySelectorAll("div")];
         const cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
         
-        // If the textarea exists, run the comparison logic
         if (cleanedItemNameTextarea) {
             runSmartComparison();
 
-            // And robustly ensure the input event listener is attached
             if (!cleanedItemNameTextarea.__listenerAttached) {
                 let debounceTimer;
                 cleanedItemNameTextarea.addEventListener('input', () => {
@@ -291,13 +292,10 @@
                         debounceTimer = setTimeout(runSmartComparison, 300);
                     }
                 }, { passive: true });
-                
-                // Flag the element itself to prevent re-attaching listeners
                 cleanedItemNameTextarea.__listenerAttached = true;
             }
         }
     }
-    // --- ⭐ END: ROBUST LISTENER ATTACHMENT LOGIC ---
 
     function closeAndResetUI() {
         const middleBottomBtn = document.getElementById('middle-bottom-close-button');
@@ -330,7 +328,7 @@
     const mutationObserver = new MutationObserver(() => {
         if (!isUpdatingComparison && isHighlightingEnabled) {
             clearTimeout(observerTimer);
-            observerTimer = setTimeout(runAllComparisonsAndAttachListener, 300); // Calls the robust function
+            observerTimer = setTimeout(runAllComparisonsAndAttachListener, 300);
         }
     });
 
@@ -365,4 +363,86 @@
         const inputElement = document.querySelector(`input[aria-labelledby="${comboboxId}"]`);
         if (!inputElement) return;
         inputElement.focus(); inputElement.click();
-        inputElement.value = value
+        inputElement.value = valueToSelect;
+        inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
+        await delay(FAST_DELAY_MS);
+        const targetOption = [...document.querySelectorAll(SELECTORS.dropdownOption)].find(option => normalizeText(option.textContent) === normalizeText(valueToSelect));
+        if (targetOption) targetOption.click();
+        else {
+            const clearButton = document.querySelector(`#${comboboxId} + .vs__actions .vs__clear`);
+            if (clearButton) clearButton.click();
+        }
+        await delay(INTERACTION_DELAY_MS);
+    }
+
+    async function runSearchAutomation() {
+        const cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
+        const searchBoxInput = document.querySelector(SELECTORS.searchBox);
+        if (!searchBoxInput || !cleanedItemNameTextarea) return;
+
+        const cleanedItemName = cleanedItemNameTextarea.value.trim();
+        const words = cleanedItemName.split(/\s+/).filter(Boolean);
+        if (words.length === 0) return;
+
+        searchBoxInput.focus(); searchBoxInput.click();
+        await delay(FAST_DELAY_MS);
+
+        const potentialSearchTerms = [];
+        if (words.length >= 2) potentialSearchTerms.push(words.slice(0, 2).join(' '));
+        potentialSearchTerms.push(words[0]);
+
+        for (const searchTerm of potentialSearchTerms) {
+            updateTextarea(searchBoxInput, searchTerm);
+            searchBoxInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, passive: true }));
+            await delay(SEARCH_DELAY_MS);
+            const currentResults = document.querySelectorAll(SELECTORS.searchResults);
+            if (currentResults.length > 0) {
+                let bestMatchElement = null;
+                let minLevDistance = Infinity;
+                const targetTextNormalized = normalizeText(cleanedItemName);
+                for (const result of currentResults) {
+                    const resultTextNormalized = normalizeText(result.textContent);
+                    if (resultTextNormalized === targetTextNormalized) {
+                        result.click(); return;
+                    }
+                    const distance = levenshtein(targetTextNormalized, resultTextNormalized);
+                    if (distance < minLevDistance) {
+                        minLevDistance = distance;
+                        bestMatchElement = result;
+                    }
+                }
+                if (bestMatchElement && (minLevDistance / Math.max(targetTextNormalized.length, bestMatchElement.textContent.length) < 0.3)) {
+                    bestMatchElement.click();
+                }
+                return;
+            }
+        }
+    }
+
+    // --- MAIN EXECUTION FLOW ---
+    window.__autoFillObserver = mutationObserver;
+    mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: false });
+
+    await loadTypoLibrary();
+    createMiddleBottomButton();
+    runAllComparisonsAndAttachListener(); // Initial run
+
+    const matchedSheetRow = await processGoogleSheetData();
+    if (!matchedSheetRow) return;
+
+    const dropdownConfigurations = [
+        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
+        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
+        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
+        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
+        { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
+    ];
+    for (const { id, value } of dropdownConfigurations) await fillDropdown(id, value);
+
+    const woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
+    if (woflowBrandPathInput && woflowBrandPathInput.value.trim() === "") {
+        updateTextarea(woflowBrandPathInput, "Brand Not Available");
+    }
+    
+    await runSearchAutomation();
+})();
