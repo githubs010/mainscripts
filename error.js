@@ -30,10 +30,15 @@
     // --- END: ACCESS CONTROL ---
 
 
-    // --- OPTIMIZATION: Constants ---
+    // --- OPTIMIZATION & DICTIONARY Constants ---
     const TYPO_CONFIG = {
         libURL: 'https://cdn.jsdelivr.net/npm/typo-js@1.2.1/typo.js',
-        dictionaries: [{ name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' }],
+        // ADDED: Dictionaries for US, Canadian, and Australian English for comprehensive spell checking
+        dictionaries: [
+            { name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' },
+            { name: 'en_CA', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-ca@2.0.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-ca@2.0.0/index.dic' },
+            { name: 'en_AU', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au@2.0.1/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-au@2.0.1/index.dic' }
+        ],
         ignoreLength: 3
     };
     const MONITORED_DIV_PREFIXES = [
@@ -124,11 +129,19 @@
     async function loadTypoLibrary() {
         try {
             if (typeof Typo === 'undefined') await loadScript(TYPO_CONFIG.libURL);
+            // This will now load all dictionaries defined in the config
             const dictPromises = TYPO_CONFIG.dictionaries.map(async dictConfig => {
-                const [affResponse, dicResponse] = await Promise.all([fetch(dictConfig.affURL), fetch(dictConfig.dicURL)]);
-                return new Typo(dictConfig.name, await affResponse.text(), await dicResponse.text());
+                try {
+                    const [affResponse, dicResponse] = await Promise.all([fetch(dictConfig.affURL), fetch(dictConfig.dicURL)]);
+                    if (!affResponse.ok || !dicResponse.ok) throw new Error(`Failed to fetch ${dictConfig.name}`);
+                    return new Typo(dictConfig.name, await affResponse.text(), await dicResponse.text());
+                } catch (e) {
+                    console.error(`Could not load dictionary: ${dictConfig.name}`, e);
+                    return null; // Return null on failure so Promise.all doesn't fail completely
+                }
             });
-            if (dictionaries.length === 0) dictionaries.push(...(await Promise.all(dictPromises)));
+            const loadedDicts = (await Promise.all(dictPromises)).filter(Boolean); // Filter out any nulls
+            if (dictionaries.length === 0) dictionaries.push(...loadedDicts);
         } catch (error) {
             console.error("Could not load Typo library.", error);
         }
@@ -143,7 +156,9 @@
             const lowerCleanWord = cleanWord.toLowerCase();
             if (checkedWords.has(lowerCleanWord) || cleanWord.length <= TYPO_CONFIG.ignoreLength || /\d/.test(cleanWord) || cleanWord.toUpperCase() === cleanWord) continue;
             checkedWords.add(lowerCleanWord);
+            // Word is considered correct if it exists in ANY of the loaded dictionaries
             if (!dictionaries.some(dict => dict.check(cleanWord))) {
+                // Get suggestions from the primary (US) dictionary
                 const corrections = dictionaries[0].suggest(cleanWord);
                 if (corrections && corrections.length > 0) {
                     suggestions.push({ type: 'spell', from: word, to: corrections[0] });
@@ -152,7 +167,8 @@
         }
         return suggestions;
     }
-
+    
+    // --- RESTORED: Full-featured comparison and suggestion logic ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
 
@@ -165,7 +181,6 @@
         const originalValue = originalBTag.textContent.trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
 
-        // --- Prepare Suggestion Container ---
         let suggestionContainer = document.getElementById('woflow-suggestion-container');
         if (!suggestionContainer) {
             suggestionContainer = document.createElement('div');
@@ -181,7 +196,7 @@
         if (getSortedNormalizedWords(originalValue) === getSortedNormalizedWords(textareaValue)) {
             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
             originalBTag.innerHTML = escapeHtml(originalValue);
-            suggestionContainer.innerHTML = ''; // Clear suggestions on match
+            suggestionContainer.innerHTML = '';
             return;
         }
 
@@ -192,7 +207,6 @@
         const textareaWordMap = new Map(textareaWords.map(w => [w.toLowerCase(), { word: w, used: false }]));
         const diffSuggestions = [];
 
-        // --- Calculate Differences ---
         originalWords.forEach(origWord => {
             const lowerOrigWord = origWord.toLowerCase();
             if (textareaWordMap.has(lowerOrigWord) && !textareaWordMap.get(lowerOrigWord).used) {
@@ -223,11 +237,9 @@
             if (!data.used) diffSuggestions.push({ type: 'remove', word: data.word });
         });
 
-        // --- Highlight Missing Words ---
         const missingWords = diffSuggestions.filter(s => s.type === 'add').map(s => s.word);
         if (missingWords.length > 0) {
-            const uniqueMissingWords = [...new Set(missingWords)];
-            const highlightRegex = new RegExp(`\\b(${uniqueMissingWords.map(regexEscape).join('|')})\\b`, 'gi');
+            const highlightRegex = new RegExp(`\\b(${missingWords.map(regexEscape).join('|')})\\b`, 'gi');
             originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
                 (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
             );
@@ -235,23 +247,18 @@
             originalBTag.innerHTML = escapeHtml(originalValue);
         }
         
-        // --- Generate and Render Suggestions ---
         const spellSuggestions = getSpellingSuggestions(textareaWords);
         const allSuggestions = [...diffSuggestions, ...spellSuggestions];
 
         const newSuggestionKeys = new Set(allSuggestions.map(s => `${s.type}-${s.from || s.word}-${s.to || ''}`));
         
-        // Remove old buttons no longer needed
         suggestionContainer.querySelectorAll('button[data-sugg-key]').forEach(btn => {
-            if (!newSuggestionKeys.has(btn.dataset.suggKey)) {
-                btn.remove();
-            }
+            if (!newSuggestionKeys.has(btn.dataset.suggKey)) btn.remove();
         });
         
-        // Add new buttons
         allSuggestions.forEach(sugg => {
-            const suggKey = `${sugg.type}-${sugg.from || sugg.word}-${sugg.to || ''}`;
-            if (suggestionContainer.querySelector(`[data-sugg-key="${suggKey}"]`)) return; // Already exists
+            const suggKey = `${sugg.type}-${s.from || s.word}-${s.to || ''}`;
+            if (suggestionContainer.querySelector(`[data-sugg-key="${suggKey}"]`)) return;
 
             const btn = document.createElement('button');
             btn.type = 'button';
@@ -292,7 +299,7 @@
                 updateTextarea(domCache.cleanedItemNameTextarea, newValueOnClick);
                 await delay(INTERACTION_DELAY_MS);
                 isUpdatingComparison = false;
-                runSmartComparison(); // Re-run comparison after applying change
+                runSmartComparison();
             };
             suggestionContainer.appendChild(btn);
         });
@@ -314,16 +321,13 @@
         }
     }
     
-    // --- UI Control Functions ---
     function closeAndResetUI() {
         const middleBottomBtn = document.getElementById('middle-bottom-close-button');
         const suggestionContainer = document.getElementById('woflow-suggestion-container');
-        
         if (domCache.cleanedItemNameTextarea) domCache.cleanedItemNameTextarea.style.removeProperty('background-color');
         if (suggestionContainer) suggestionContainer.remove();
         if (middleBottomBtn) middleBottomBtn.remove();
         isHighlightingEnabled = false;
-
         const originalDiv = findDivByTextPrefix("Original Item Name :");
         if (originalDiv) {
             const originalBTag = originalDiv.querySelector("b");
@@ -347,7 +351,6 @@
         document.body.appendChild(btn);
     }
 
-    // --- Observers and Automation ---
     let observerTimer;
     const mutationObserver = new MutationObserver(() => {
         if (!isUpdatingComparison && isHighlightingEnabled) {
@@ -361,9 +364,7 @@
             const divContentMap = new Map();
             for (const prefix of MONITORED_DIV_PREFIXES) {
                 const targetDiv = findDivByTextPrefix(prefix);
-                if (targetDiv) {
-                    divContentMap.set(prefix, normalizeText(targetDiv.textContent.replace(prefix, "")));
-                }
+                if (targetDiv) divContentMap.set(prefix, normalizeText(targetDiv.textContent.replace(prefix, "")));
             }
             const sheetResponse = await fetch(SHEET_URL);
             if (!sheetResponse.ok) throw new Error(`HTTP error! status: ${sheetResponse.status}`);
@@ -372,9 +373,7 @@
                 const keywords = row.Keyword?.split(",").map(kw => normalizeText(kw.trim())).filter(Boolean);
                 if (!keywords || keywords.length === 0) continue;
                 for (const text of divContentMap.values()) {
-                    if (keywords.some(keyword => text.includes(keyword))) {
-                        return row;
-                    }
+                    if (keywords.some(keyword => text.includes(keyword))) return row;
                 }
             }
             return null;
