@@ -6,18 +6,16 @@
     // --- 🔑 START: DYNAMIC ACCESS CONTROL ---
     async function getAuthorizedUsers(sheetUrl) {
         try {
-            // Assumes your Google Sheet has a second tab (sheet) named "Users"
             const usersSheetUrl = sheetUrl.replace('/Sheet1', '/Users');
             const response = await fetch(usersSheetUrl);
             if (!response.ok) {
-                console.error("Failed to fetch Users sheet, using fallback.");
+                console.warn("Could not fetch Users sheet, using fallback admin.");
                 return [FALLBACK_ADMIN];
             }
             const users = await response.json();
-            // Assumes the "Users" sheet has a column header named "username"
             return users.map(user => user.username.toLowerCase()).filter(Boolean);
         } catch (e) {
-            console.error("Error fetching users, using fallback.", e);
+            console.error("Error fetching users, using fallback admin.", e);
             return [FALLBACK_ADMIN];
         }
     }
@@ -26,7 +24,7 @@
     const currentUser = window.WoflowAccessUser;
 
     if (!currentUser || !AUTHORIZED_USERS.includes(currentUser.toLowerCase())) {
-        alert('⛔ Access Denied. Please contact the administrator.');
+        alert('⛔ Access Denied. You are not authorized to use this script. Please contact the administrator.');
         return;
     }
     // --- END: ACCESS CONTROL ---
@@ -157,23 +155,44 @@
 
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
+
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
         if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea) return;
+
         const originalBTag = originalItemNameDiv.querySelector("b");
         if (!originalBTag) return;
+
         const originalValue = originalBTag.textContent.trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
+
+        // --- Prepare Suggestion Container ---
+        let suggestionContainer = document.getElementById('woflow-suggestion-container');
+        if (!suggestionContainer) {
+            suggestionContainer = document.createElement('div');
+            suggestionContainer.id = 'woflow-suggestion-container';
+            Object.assign(suggestionContainer.style, {
+                marginTop: '10px', padding: '5px', border: '1px dashed #ccc', borderRadius: '5px',
+                minHeight: '40px', backgroundColor: 'rgba(240, 240, 240, 0.5)'
+            });
+            domCache.cleanedItemNameTextarea.insertAdjacentElement('afterend', suggestionContainer);
+        }
+
         const getSortedNormalizedWords = (str) => normalizeText(str).split(/\s+/).filter(Boolean).sort().join(' ');
         if (getSortedNormalizedWords(originalValue) === getSortedNormalizedWords(textareaValue)) {
             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
             originalBTag.innerHTML = escapeHtml(originalValue);
+            suggestionContainer.innerHTML = ''; // Clear suggestions on match
             return;
         }
+
         domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
+
         const originalWords = originalValue.split(/\s+/).filter(Boolean);
         const textareaWords = textareaValue.split(/\s+/).filter(Boolean);
         const textareaWordMap = new Map(textareaWords.map(w => [w.toLowerCase(), { word: w, used: false }]));
         const diffSuggestions = [];
+
+        // --- Calculate Differences ---
         originalWords.forEach(origWord => {
             const lowerOrigWord = origWord.toLowerCase();
             if (textareaWordMap.has(lowerOrigWord) && !textareaWordMap.get(lowerOrigWord).used) {
@@ -186,8 +205,8 @@
                 if (!data.used) {
                     const distance = levenshtein(lowerOrigWord, lowerTextWord);
                     const shorterLength = Math.min(lowerOrigWord.length, lowerTextWord.length);
-                    const relativeDistance = shorterLength > 0 ? distance / shorterLength : (distance === 0 ? 0 : Infinity);
-                    if (distance <= minDistance && relativeDistance < 0.5) {
+                    const relativeDistance = shorterLength > 0 ? distance / shorterLength : Infinity;
+                    if (distance < minDistance && relativeDistance < 0.5) {
                         minDistance = distance;
                         bestMatch = data;
                     }
@@ -203,9 +222,11 @@
         textareaWordMap.forEach((data) => {
             if (!data.used) diffSuggestions.push({ type: 'remove', word: data.word });
         });
+
+        // --- Highlight Missing Words ---
         const missingWords = diffSuggestions.filter(s => s.type === 'add').map(s => s.word);
-        const uniqueMissingWords = [...new Set(missingWords)];
-        if (uniqueMissingWords.length > 0) {
+        if (missingWords.length > 0) {
+            const uniqueMissingWords = [...new Set(missingWords)];
             const highlightRegex = new RegExp(`\\b(${uniqueMissingWords.map(regexEscape).join('|')})\\b`, 'gi');
             originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
                 (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
@@ -213,6 +234,68 @@
         } else {
             originalBTag.innerHTML = escapeHtml(originalValue);
         }
+        
+        // --- Generate and Render Suggestions ---
+        const spellSuggestions = getSpellingSuggestions(textareaWords);
+        const allSuggestions = [...diffSuggestions, ...spellSuggestions];
+
+        const newSuggestionKeys = new Set(allSuggestions.map(s => `${s.type}-${s.from || s.word}-${s.to || ''}`));
+        
+        // Remove old buttons no longer needed
+        suggestionContainer.querySelectorAll('button[data-sugg-key]').forEach(btn => {
+            if (!newSuggestionKeys.has(btn.dataset.suggKey)) {
+                btn.remove();
+            }
+        });
+        
+        // Add new buttons
+        allSuggestions.forEach(sugg => {
+            const suggKey = `${sugg.type}-${sugg.from || sugg.word}-${sugg.to || ''}`;
+            if (suggestionContainer.querySelector(`[data-sugg-key="${suggKey}"]`)) return; // Already exists
+
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.dataset.suggKey = suggKey;
+            Object.assign(btn.style, {
+                display: 'inline-block', marginTop: '5px', marginRight: '5px', padding: '3px 8px', fontSize: '13px',
+                border: '1px solid', borderRadius: '8px', cursor: 'pointer', transition: 'background-color 0.2s, transform 0.1s'
+            });
+            btn.onmouseover = () => btn.style.transform = 'translateY(-1px)';
+            btn.onmouseout = () => btn.style.transform = 'translateY(0)';
+            
+            let newValueOnClick = domCache.cleanedItemNameTextarea.value.trim();
+
+            if (sugg.type === 'add') {
+                const wordToAdd = toTitleCase(sugg.word);
+                btn.textContent = `+ ${wordToAdd}`;
+                Object.assign(btn.style, { backgroundColor: '#dee2e6', color: '#343a40', borderColor: '#adb5bd' });
+                newValueOnClick = (newValueOnClick + ' ' + wordToAdd).trim();
+            } else if (sugg.type === 'fix') {
+                const wordTo = toTitleCase(sugg.to);
+                btn.textContent = `Fix: ${sugg.from} → ${wordTo}`;
+                Object.assign(btn.style, { backgroundColor: '#ced4da', color: '#343a40', borderColor: '#adb5bd' });
+                newValueOnClick = newValueOnClick.replace(new RegExp(`\\b${regexEscape(sugg.from)}\\b`, 'gi'), wordTo);
+            } else if (sugg.type === 'remove') {
+                const wordToRemove = sugg.word;
+                btn.textContent = `– ${wordToRemove}`;
+                Object.assign(btn.style, { backgroundColor: '#adb5bd', color: '#f8f9fa', borderColor: '#343a40' });
+                newValueOnClick = newValueOnClick.replace(new RegExp(`\\s*\\b${regexEscape(wordToRemove)}\\b`, 'gi'), '').replace(/\s+/g, ' ').trim();
+            } else if (sugg.type === 'spell') {
+                const correctedWord = toTitleCase(sugg.to);
+                btn.textContent = `Spell: ${sugg.from} → ${correctedWord}`;
+                Object.assign(btn.style, { backgroundColor: '#ced4da', color: '#343a40', borderColor: '#adb5bd' });
+                newValueOnClick = newValueOnClick.replace(new RegExp(`\\b${regexEscape(sugg.from)}\\b`, 'gi'), correctedWord);
+            }
+
+            btn.onclick = async () => {
+                isUpdatingComparison = true;
+                updateTextarea(domCache.cleanedItemNameTextarea, newValueOnClick);
+                await delay(INTERACTION_DELAY_MS);
+                isUpdatingComparison = false;
+                runSmartComparison(); // Re-run comparison after applying change
+            };
+            suggestionContainer.appendChild(btn);
+        });
     }
 
     let isTextareaListenerAttached = false;
@@ -230,7 +313,41 @@
             isTextareaListenerAttached = true;
         }
     }
+    
+    // --- UI Control Functions ---
+    function closeAndResetUI() {
+        const middleBottomBtn = document.getElementById('middle-bottom-close-button');
+        const suggestionContainer = document.getElementById('woflow-suggestion-container');
+        
+        if (domCache.cleanedItemNameTextarea) domCache.cleanedItemNameTextarea.style.removeProperty('background-color');
+        if (suggestionContainer) suggestionContainer.remove();
+        if (middleBottomBtn) middleBottomBtn.remove();
+        isHighlightingEnabled = false;
 
+        const originalDiv = findDivByTextPrefix("Original Item Name :");
+        if (originalDiv) {
+            const originalBTag = originalDiv.querySelector("b");
+            if (originalBTag) originalBTag.innerHTML = escapeHtml(originalBTag.textContent);
+        }
+    }
+
+    function createMiddleBottomButton() {
+        if (document.getElementById('middle-bottom-close-button')) return;
+        const btn = document.createElement('button');
+        btn.id = 'middle-bottom-close-button';
+        btn.textContent = '✕';
+        Object.assign(btn.style, {
+            position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: '9999',
+            width: '40px', height: '40px', padding: '0', background: 'rgba(40, 40, 40, 0.5)',
+            color: '#fff', border: '1px solid rgba(0, 0, 0, 0.2)', borderRadius: '50%',
+            cursor: 'pointer', fontSize: '18px', fontWeight: 'normal', lineHeight: '40px',
+            textAlign: 'center', boxShadow: '0 2px 5px rgba(0,0,0,0.2)', backdropFilter: 'blur(3px)'
+        });
+        btn.onclick = closeAndResetUI;
+        document.body.appendChild(btn);
+    }
+
+    // --- Observers and Automation ---
     let observerTimer;
     const mutationObserver = new MutationObserver(() => {
         if (!isUpdatingComparison && isHighlightingEnabled) {
@@ -245,8 +362,7 @@
             for (const prefix of MONITORED_DIV_PREFIXES) {
                 const targetDiv = findDivByTextPrefix(prefix);
                 if (targetDiv) {
-                    const text = normalizeText(targetDiv.textContent.replace(prefix, ""));
-                    divContentMap.set(prefix, text);
+                    divContentMap.set(prefix, normalizeText(targetDiv.textContent.replace(prefix, "")));
                 }
             }
             const sheetResponse = await fetch(SHEET_URL);
@@ -256,16 +372,13 @@
                 const keywords = row.Keyword?.split(",").map(kw => normalizeText(kw.trim())).filter(Boolean);
                 if (!keywords || keywords.length === 0) continue;
                 for (const text of divContentMap.values()) {
-                    for (const keyword of keywords) {
-                        if (text.includes(keyword)) {
-                            return row;
-                        }
+                    if (keywords.some(keyword => text.includes(keyword))) {
+                        return row;
                     }
                 }
             }
             return null;
         } catch (error) {
-            // Provide better feedback to the user
             alert('❌ Could not connect to the Google Sheet. Please check your connection and try again.');
             console.error('Google Sheet fetch error:', error);
             return null;
@@ -335,14 +448,17 @@
     domCache.cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
     domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
     domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
+
     window.__autoFillObserver = mutationObserver;
-    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: false });
+
     await loadTypoLibrary();
+    createMiddleBottomButton();
     runAllComparisons();
+
     const matchedSheetRow = await processGoogleSheetData();
-    if (!matchedSheetRow) {
-        return;
-    }
+    if (!matchedSheetRow) return;
+
     const dropdownConfigurations = [
         { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() },
         { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
