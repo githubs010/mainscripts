@@ -61,17 +61,13 @@
     };
 
     // --- Global State and Caching ---
-    const state = {
-        isUpdatingComparison: false,
-        isScriptEnabled: true,
-        matchedSheetRow: null,
-    };
+    let isUpdatingComparison = false;
     const dictionaries = [];
     const domCache = {
         cleanedItemNameTextarea: null,
         searchBoxInput: null,
         woflowBrandPathInput: null,
-        allDivs: [] // Will be populated later
+        allDivs: []
     };
 
     // --- Utility Functions ---
@@ -128,72 +124,6 @@
         });
     }
 
-    // --- NEW: UI Module ---
-    const UI = {
-        showToast: (message, type = 'info') => {
-            const toast = document.createElement('div');
-            toast.className = `script-toast toast-${type}`;
-            toast.textContent = message;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.classList.add('show'), 10);
-            setTimeout(() => {
-                toast.classList.remove('show');
-                setTimeout(() => toast.remove(), 500);
-            }, 3000);
-        },
-        updateStatus: (text) => {
-            const statusDiv = document.getElementById('script-status');
-            if (statusDiv) statusDiv.textContent = text;
-        },
-        injectControls: () => {
-            const css = `
-                .script-control-panel { position: fixed; bottom: 15px; right: 15px; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 9999; font-family: sans-serif; font-size: 14px; }
-                .script-control-panel h3 { margin: 0 0 10px; font-size: 16px; color: #333; }
-                .script-control-panel button { background-color: #007bff; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; margin-top: 5px; width: 100%; transition: background-color 0.2s; }
-                .script-control-panel button:hover { background-color: #0056b3; }
-                .script-control-panel .toggle-switch { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-                .script-control-panel #script-status { margin-top: 10px; font-size: 12px; color: #666; text-align: center; }
-                .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
-                .switch input { opacity: 0; width: 0; height: 0; }
-                .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
-                .slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
-                input:checked + .slider { background-color: #28a745; }
-                input:checked + .slider:before { transform: translateX(20px); }
-                .script-toast { position: fixed; top: 20px; right: 20px; background-color: #333; color: white; padding: 15px 20px; border-radius: 5px; z-index: 10000; opacity: 0; transition: opacity 0.5s, top 0.5s; font-family: sans-serif; }
-                .script-toast.show { opacity: 1; top: 30px; }
-                .toast-error { background-color: #dc3545; }
-            `;
-            const style = document.createElement('style');
-            style.textContent = css;
-            document.head.appendChild(style);
-
-            const panel = document.createElement('div');
-            panel.className = 'script-control-panel';
-            panel.innerHTML = `
-                <h3>Automation Controls</h3>
-                <div class="toggle-switch">
-                    <label for="enable-script-toggle">Enable Automation</label>
-                    <label class="switch">
-                        <input type="checkbox" id="enable-script-toggle" ${state.isScriptEnabled ? 'checked' : ''}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <button id="clean-fill-btn">Clean & Fill Name</button>
-                <button id="run-autofill-btn">Run Autofill</button>
-                <div id="script-status">Initializing...</div>
-            `;
-            document.body.appendChild(panel);
-
-            document.getElementById('enable-script-toggle').addEventListener('change', (e) => {
-                state.isScriptEnabled = e.target.checked;
-                UI.showToast(`Automation ${state.isScriptEnabled ? 'Enabled' : 'Disabled'}`);
-                if (state.isScriptEnabled) runAllComparisons();
-            });
-            document.getElementById('run-autofill-btn').addEventListener('click', runFullAutomation);
-            document.getElementById('clean-fill-btn').addEventListener('click', cleanAndFillName);
-        }
-    };
-
     async function loadTypoLibrary() {
         try {
             if (typeof Typo === 'undefined') await loadScript(TYPO_CONFIG.libURL);
@@ -204,32 +134,12 @@
             });
             dictionaries.push(...(await Promise.all(dictPromises)));
         } catch (error) {
-            console.error("Could not load Typo library.", error);
-            UI.showToast('Error loading spell checker.', 'error');
+            console.error("Could not load Typo spell-checking library.", error);
         }
-    }
-
-    function getSpellingSuggestions(words) {
-        if (dictionaries.length === 0) return new Map();
-        const suggestions = new Map();
-        const checkedWords = new Set();
-        for (const word of words) {
-            const cleanWord = word.replace(/['"(),.?]/g, '');
-            const lowerCleanWord = cleanWord.toLowerCase();
-            if (checkedWords.has(lowerCleanWord) || cleanWord.length <= TYPO_CONFIG.ignoreLength || /\d/.test(cleanWord) || cleanWord.toUpperCase() === cleanWord) continue;
-            checkedWords.add(lowerCleanWord);
-            if (!dictionaries.some(dict => dict.check(cleanWord))) {
-                const corrections = dictionaries[0].suggest(cleanWord);
-                if (corrections && corrections.length > 0) {
-                    suggestions.set(word, corrections[0]);
-                }
-            }
-        }
-        return suggestions;
     }
 
     function runSmartComparison() {
-        if (!state.isScriptEnabled || state.isUpdatingComparison) return;
+        if (isUpdatingComparison) return;
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
         if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea) return;
         const originalBTag = originalItemNameDiv.querySelector("b");
@@ -286,12 +196,12 @@
 
     let isTextareaListenerAttached = false;
     function runAllComparisons() {
-        if (state.isUpdatingComparison) return;
+        if (isUpdatingComparison) return;
         runSmartComparison();
         if (!isTextareaListenerAttached && domCache.cleanedItemNameTextarea) {
             let debounceTimer;
             domCache.cleanedItemNameTextarea.addEventListener('input', () => {
-                if (!state.isUpdatingComparison) {
+                if (!isUpdatingComparison) {
                     clearTimeout(debounceTimer);
                     debounceTimer = setTimeout(runSmartComparison, 300);
                 }
@@ -302,10 +212,10 @@
 
     let observerTimer;
     const mutationObserver = new MutationObserver(() => {
-        if (!state.isUpdatingComparison && state.isScriptEnabled) {
+        if (!isUpdatingComparison) {
             clearTimeout(observerTimer);
             observerTimer = setTimeout(() => {
-                domCache.allDivs = [...document.querySelectorAll("div")]; // Re-cache divs
+                domCache.allDivs = [...document.querySelectorAll("div")]; // Re-cache divs for dynamic content
                 runAllComparisons();
             }, 300);
         }
@@ -337,7 +247,7 @@
             }
             return null;
         } catch (error) {
-            UI.showToast('Could not connect to Google Sheet.', 'error');
+            alert('❌ Could not connect to the Google Sheet. Please check your connection and try again.');
             console.error('Google Sheet fetch error:', error);
             return null;
         }
@@ -401,78 +311,31 @@
             }
         }
     }
-    
-    // --- NEW: Enhanced Automation Flows ---
 
-    async function cleanAndFillName() {
-        if (!state.isScriptEnabled) {
-            UI.showToast('Automation is disabled.', 'error');
+    async function runAutoFill() {
+        const matchedSheetRow = await processGoogleSheetData();
+        if (!matchedSheetRow) {
+            console.log("No matching rule found in Google Sheet for auto-filling.");
             return;
         }
-        const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
-        if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea) {
-            UI.showToast('Could not find item name fields.', 'error');
-            return;
-        }
-        let cleanedName = originalItemNameDiv.querySelector("b").textContent.trim();
-        const words = cleanedName.split(/\s+/).filter(Boolean);
 
-        // 1. Apply spelling corrections
-        const spellingSuggestions = getSpellingSuggestions(words);
-        for (const [original, suggestion] of spellingSuggestions.entries()) {
-            cleanedName = cleanedName.replace(new RegExp(`\\b${regexEscape(original)}\\b`, 'g'), suggestion);
-        }
-
-        // 2. Apply rules from sheet (remove/add keywords)
-        if (state.matchedSheetRow) {
-            const toRemove = state.matchedSheetRow["Remove Keywords"]?.split(',').map(k => k.trim()).filter(Boolean) || [];
-            const toAdd = state.matchedSheetRow["Add Keywords"]?.split(',').map(k => k.trim()).filter(Boolean) || [];
-            
-            if (toRemove.length > 0) {
-                const removeRegex = new RegExp(`\\b(${toRemove.map(regexEscape).join('|')})\\b`, 'gi');
-                cleanedName = cleanedName.replace(removeRegex, '').replace(/\s+/g, ' ').trim();
-            }
-            if (toAdd.length > 0) {
-                cleanedName = `${cleanedName} ${toAdd.join(' ')}`.trim();
-            }
-        }
+        console.log("Sheet data loaded, filling form...");
         
-        // 3. Apply Title Case and update
-        cleanedName = toTitleCase(cleanedName);
-        updateTextarea(domCache.cleanedItemNameTextarea, cleanedName);
-        UI.showToast('Item Name Cleaned & Filled!');
-    }
-
-
-    async function runFullAutomation() {
-        if (!state.isScriptEnabled) {
-            UI.showToast('Automation is disabled.', 'error');
-            return;
-        }
-        UI.updateStatus("Processing sheet...");
-        state.matchedSheetRow = await processGoogleSheetData();
-        if (!state.matchedSheetRow) {
-            UI.updateStatus("No match found in sheet.");
-            UI.showToast("No matching rule found in Google Sheet.");
-            return;
-        }
-
-        UI.showToast("Sheet data loaded, filling form...");
-        
+        // Map sheet columns to their corresponding dropdown IDs and default values
         const dropdownConfigs = [
             { id: "vs1__combobox",  sheetColumn: "Vertical Name" },
-            { id: "vs2__combobox",  sheetColumn: "Category" }, // More descriptive name
-            { id: "vs3__combobox",  sheetColumn: "Sub-Category" },
-            { id: "vs4__combobox",  sheetColumn: "Invalid Reason", defaultValue: "No Error" },
-            { id: "vs5__combobox",  sheetColumn: "Contains Alcohol?" },
-            { id: "vs6__combobox",  sheetColumn: "Contains Tobacco?" },
-            { id: "vs7__combobox",  sheetColumn: "Is a Kit?", defaultValue: "Yes" },
-            { id: "vs8__combobox",  sheetColumn: "Is a Parfait?" },
-            { id: "vs17__combobox", sheetColumn: "Is a Sample?", defaultValue: "Yes" }
+            { id: "vs2__combobox",  sheetColumn: "vs2" }, // Using original names from your first script
+            { id: "vs3__combobox",  sheetColumn: "vs3" },
+            { id: "vs4__combobox",  sheetColumn: "vs4", defaultValue: "No Error" },
+            { id: "vs5__combobox",  sheetColumn: "vs5" },
+            { id: "vs6__combobox",  sheetColumn: "vs6" },
+            { id: "vs7__combobox",  sheetColumn: "vs7", defaultValue: "Yes" },
+            { id: "vs8__combobox",  sheetColumn: "vs8" },
+            { id: "vs17__combobox", sheetColumn: "vs17", defaultValue: "Yes" }
         ];
 
         for (const config of dropdownConfigs) {
-            const value = state.matchedSheetRow[config.sheetColumn]?.trim() || config.defaultValue;
+            const value = matchedSheetRow[config.sheetColumn]?.trim() || config.defaultValue;
             await fillDropdown(config.id, value);
         }
 
@@ -483,15 +346,12 @@
         if (domCache.cleanedItemNameTextarea && domCache.cleanedItemNameTextarea.value.trim() !== "") {
             await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
         }
-        UI.updateStatus("Automation complete!");
+        console.log("Auto-fill complete!");
     }
-
 
     // --- Main Execution Flow ---
     async function main() {
-        UI.injectControls();
-        
-        // Cache DOM elements
+        // Initial DOM cache
         domCache.cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
         domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
         domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
@@ -500,12 +360,10 @@
         window.__autoFillObserver = mutationObserver;
         mutationObserver.observe(document.body, { childList: true, subtree: true });
 
-        UI.updateStatus("Loading spell checker...");
         await loadTypoLibrary();
-        UI.updateStatus("Ready.");
         
         runAllComparisons();
-        await runFullAutomation(); // Run autofill on initial load
+        await runAutoFill(); // Run the autofill process immediately on load
     }
 
     main();
