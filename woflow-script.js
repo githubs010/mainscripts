@@ -57,7 +57,10 @@
         brandPath: 'input[name="Woflow brand_path"]',
         searchBox: 'input[name="search-box"]',
         searchResults: 'a.search-results',
-        dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li'
+        dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
+        // NEW: Selectors for Size and UOM fields
+        cleanedSize: 'input[name="Woflow Cleaned Size"]',
+        cleanedUom: 'input[aria-labelledby="vs9__combobox"]', // UOM is often a vue-select dropdown
     };
 
     // --- Global State and Caching ---
@@ -67,7 +70,10 @@
         cleanedItemNameTextarea: null,
         searchBoxInput: null,
         woflowBrandPathInput: null,
-        allDivs: []
+        allDivs: [],
+        // NEW: Cache for Size and UOM
+        cleanedSizeInput: null,
+        cleanedUomDropdown: null,
     };
 
     // --- Utility Functions ---
@@ -91,11 +97,6 @@
             textarea.dispatchEvent(new Event('input', { bubbles: true, passive: true }));
             textarea.dispatchEvent(new Event('change', { bubbles: true, passive: true }));
         }
-    }
-
-    function toTitleCase(str) {
-        if (!str) return '';
-        return str.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
     }
 
     function levenshtein(s1, s2) {
@@ -215,7 +216,7 @@
         if (!isUpdatingComparison) {
             clearTimeout(observerTimer);
             observerTimer = setTimeout(() => {
-                domCache.allDivs = [...document.querySelectorAll("div")]; // Re-cache divs for dynamic content
+                domCache.allDivs = [...document.querySelectorAll("div")];
                 runAllComparisons();
             }, 300);
         }
@@ -255,10 +256,11 @@
 
     async function fillDropdown(comboboxId, valueToSelect) {
         if (!valueToSelect) return;
-        const inputElement = document.querySelector(`input[aria-labelledby="${comboboxId}"]`);
+        const inputElement = document.querySelector(comboboxId.startsWith('#vs') || comboboxId.startsWith('vs') ? `input[aria-labelledby="${comboboxId.replace('#','')}"]` : comboboxId);
         if (!inputElement) return;
         inputElement.focus();
         inputElement.click();
+        await delay(FAST_DELAY_MS);
         inputElement.value = valueToSelect;
         inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
         await delay(FAST_DELAY_MS);
@@ -267,50 +269,66 @@
         if (targetOption) {
             targetOption.click();
         } else {
-            const clearButton = document.querySelector(`#${comboboxId} + .vs__actions .vs__clear`);
-            if (clearButton) clearButton.click();
+             const baseId = comboboxId.replace('input[aria-labelledby="', '').replace('"]','');
+             const clearButton = document.querySelector(`#${baseId} + .vs__actions .vs__clear`);
+             if (clearButton) clearButton.click();
         }
         await delay(INTERACTION_DELAY_MS);
     }
+    
+    // --- NEW: Size and UOM Extraction Function ---
+    async function extractAndFillSize() {
+        // Safety check: Don't run if fields are already filled.
+        if (domCache.cleanedSizeInput?.value || domCache.cleanedUomDropdown?.value) {
+            return;
+        }
 
-    async function runSearchAutomation(cleanedItemName) {
-        if (!domCache.searchBoxInput || !cleanedItemName) return;
-        const words = cleanedItemName.split(/\s+/).filter(Boolean);
-        if (words.length === 0) return;
-        domCache.searchBoxInput.focus();
-        domCache.searchBoxInput.click();
-        await delay(FAST_DELAY_MS);
-        let potentialSearchTerms = [];
-        if (words.length >= 2) potentialSearchTerms.push(words.slice(0, 2).join(' '));
-        potentialSearchTerms.push(words[0]);
-        for (const searchTerm of potentialSearchTerms) {
-            updateTextarea(domCache.searchBoxInput, searchTerm);
-            domCache.searchBoxInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, passive: true }));
-            await delay(SEARCH_DELAY_MS);
-            const currentResults = document.querySelectorAll(SELECTORS.searchResults);
-            if (currentResults.length > 0) {
-                let bestMatchElement = null;
-                let minLevDistance = Infinity;
-                const targetTextNormalized = normalizeText(cleanedItemName);
-                for (const result of currentResults) {
-                    const resultTextNormalized = normalizeText(result.textContent);
-                    if (resultTextNormalized === targetTextNormalized) {
-                        result.click();
-                        return;
-                    }
-                    const distance = levenshtein(targetTextNormalized, resultTextNormalized);
-                    if (distance < minLevDistance) {
-                        minLevDistance = distance;
-                        bestMatchElement = result;
-                    }
-                }
-                if (bestMatchElement && (minLevDistance / Math.max(targetTextNormalized.length, bestMatchElement.textContent.length) < 0.3)) {
-                    bestMatchElement.click();
-                }
-                return;
+        // Regex to find a number (integer or decimal) followed by a unit.
+        const sizeRegex = /(\d*\.?\d+)\s*[-]?\s*(fl\s*oz|oz|g|kg|ml|l|lb|ct|pk|pack|count|gallon|gal|quart|qt|pint|pt)\b/i;
+
+        // Map of found units to the standardized value in the dropdown.
+        const uomMap = {
+            'oz': 'Ounce', 'fl oz': 'Fluid Ounce', 'g': 'Gram', 'kg': 'Kilogram',
+            'ml': 'Milliliter', 'l': 'Liter', 'lb': 'Pound', 'ct': 'Count',
+            'pk': 'Pack', 'pack': 'Pack', 'count': 'Count', 'gallon': 'Gallon',
+            'gal': 'Gallon', 'quart': 'Quart', 'qt': 'Quart', 'pint': 'Pint', 'pt': 'Pint'
+        };
+
+        const textSources = [
+            findDivByTextPrefix("Original Item Name :"),
+            findDivByTextPrefix("Original Size :"),
+            findDivByTextPrefix("Mx Provided Product Description :")
+        ];
+
+        for (const sourceDiv of textSources) {
+            if (!sourceDiv) continue;
+            
+            const text = sourceDiv.textContent;
+            const match = text.match(sizeRegex);
+
+            if (match) {
+                const sizeValue = match[1];
+                const uomValue = match[2].toLowerCase().replace(/\s/g, ''); // e.g., "fl oz" -> "floz"
+                const mappedUom = uomMap[uomValue.replace('fl', 'fl ')]; // re-add space for mapping
+
+                 if (!mappedUom) {
+                   const singleUom = uomMap[uomValue];
+                   if(!singleUom) continue; // Not a UOM we can map
+                   
+                   updateTextarea(domCache.cleanedSizeInput, sizeValue);
+                   await fillDropdown(SELECTORS.cleanedUom, singleUom);
+                   console.log(`Filled Size: ${sizeValue}, UOM: ${singleUom}`);
+                   return; // Stop after the first successful find
+                 }
+                
+                updateTextarea(domCache.cleanedSizeInput, sizeValue);
+                await fillDropdown(SELECTORS.cleanedUom, mappedUom);
+                console.log(`Filled Size: ${sizeValue}, UOM: ${mappedUom}`);
+                return; // Stop after the first successful find
             }
         }
     }
+
 
     async function runAutoFill() {
         const matchedSheetRow = await processGoogleSheetData();
@@ -318,33 +336,20 @@
             console.log("No matching rule found in Google Sheet for auto-filling.");
             return;
         }
-
         console.log("Sheet data loaded, filling form...");
-        
-        // Map sheet columns to their corresponding dropdown IDs and default values
         const dropdownConfigs = [
-            { id: "vs1__combobox",  sheetColumn: "Vertical Name" },
-            { id: "vs2__combobox",  sheetColumn: "vs2" }, // Using original names from your first script
-            { id: "vs3__combobox",  sheetColumn: "vs3" },
-            { id: "vs4__combobox",  sheetColumn: "vs4", defaultValue: "No Error" },
-            { id: "vs5__combobox",  sheetColumn: "vs5" },
-            { id: "vs6__combobox",  sheetColumn: "vs6" },
-            { id: "vs7__combobox",  sheetColumn: "vs7", defaultValue: "Yes" },
-            { id: "vs8__combobox",  sheetColumn: "vs8" },
+            { id: "vs1__combobox",  sheetColumn: "Vertical Name" }, { id: "vs2__combobox",  sheetColumn: "vs2" },
+            { id: "vs3__combobox",  sheetColumn: "vs3" }, { id: "vs4__combobox",  sheetColumn: "vs4", defaultValue: "No Error" },
+            { id: "vs5__combobox",  sheetColumn: "vs5" }, { id: "vs6__combobox",  sheetColumn: "vs6" },
+            { id: "vs7__combobox",  sheetColumn: "vs7", defaultValue: "Yes" }, { id: "vs8__combobox",  sheetColumn: "vs8" },
             { id: "vs17__combobox", sheetColumn: "vs17", defaultValue: "Yes" }
         ];
-
         for (const config of dropdownConfigs) {
             const value = matchedSheetRow[config.sheetColumn]?.trim() || config.defaultValue;
             await fillDropdown(config.id, value);
         }
-
         if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
             updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
-        }
-
-        if (domCache.cleanedItemNameTextarea && domCache.cleanedItemNameTextarea.value.trim() !== "") {
-            await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
         }
         console.log("Auto-fill complete!");
     }
@@ -355,6 +360,8 @@
         domCache.cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
         domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
         domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
+        domCache.cleanedSizeInput = document.querySelector(SELECTORS.cleanedSize);
+        domCache.cleanedUomDropdown = document.querySelector(SELECTORS.cleanedUom);
         domCache.allDivs = [...document.querySelectorAll("div")];
         
         window.__autoFillObserver = mutationObserver;
@@ -363,7 +370,12 @@
         await loadTypoLibrary();
         
         runAllComparisons();
-        await runAutoFill(); // Run the autofill process immediately on load
+        
+        // Run new size extraction first
+        await extractAndFillSize();
+
+        // Then run the sheet-based autofill
+        await runAutoFill();
     }
 
     main();
