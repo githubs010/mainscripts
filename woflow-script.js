@@ -1,9 +1,9 @@
 (async function() {
     // --- CONFIGURATION ---
     const SHEET_URL = "https://opensheet.elk.sh/188552daH24yAiXUux5aHvqBNWOPRZPJeve2Nd6acRBA/Sheet1";
-    const FALLBACK_ADMIN = 'prasad'; // A default user if the sheet fails to load
+    const FALLBACK_ADMIN = 'prasad';
 
-    // --- 🔑 START: DYNAMIC ACCESS CONTROL ---
+    // --- 🔑 DYNAMIC ACCESS CONTROL ---
     async function getAuthorizedUsers(sheetUrl) {
         try {
             const usersSheetUrl = sheetUrl.replace('/Sheet1', '/Users');
@@ -27,17 +27,28 @@
         alert('⛔ Access Denied. Please contact the administrator.');
         return;
     }
-    // --- END: ACCESS CONTROL ---
 
+    // --- NEW: Flexible UOM Definitions ---
+    // This new list helps the script understand all variations of a unit.
+    const UOM_DEFINITIONS = [
+        { key: 'oz', textAliases: ['oz'], dropdownAliases: ['Ounce', 'oz'] },
+        { key: 'fl oz', textAliases: ['fl oz', 'floz'], dropdownAliases: ['Fluid Ounce', 'fl oz', 'floz'] },
+        { key: 'g', textAliases: ['g', 'gr'], dropdownAliases: ['Gram', 'g', 'gr'] },
+        { key: 'kg', textAliases: ['kg'], dropdownAliases: ['Kilogram', 'kg'] },
+        { key: 'ml', textAliases: ['ml'], dropdownAliases: ['Milliliter', 'ml'] },
+        { key: 'l', textAliases: ['l'], dropdownAliases: ['Liter', 'l'] },
+        { key: 'lb', textAliases: ['lb', 'lbs'], dropdownAliases: ['Pound', 'lb', 'lbs', 'by pound'] },
+        { key: 'ct', textAliases: ['ct', 'count'], dropdownAliases: ['Count', 'ct', 'each'] },
+        { key: 'pk', textAliases: ['pk', 'pack'], dropdownAliases: ['Pack', 'pk', 'pack'] },
+        { key: 'gal', textAliases: ['gal', 'gallon'], dropdownAliases: ['Gallon', 'gal'] },
+        { key: 'qt', textAliases: ['qt', 'quart'], dropdownAliases: ['Quart', 'qt'] },
+        { key: 'pt', textAliases: ['pt', 'pint'], dropdownAliases: ['Pint', 'pt'] }
+    ];
 
     // --- OPTIMIZATION: Constants ---
     const TYPO_CONFIG = {
         libURL: 'https://cdn.jsdelivr.net/npm/typo-js@1.2.1/typo.js',
-        dictionaries: [{
-            name: 'en_US',
-            affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff',
-            dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic'
-        }],
+        dictionaries: [{ name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' }],
         ignoreLength: 3
     };
     const MONITORED_DIV_PREFIXES = [
@@ -58,22 +69,16 @@
         searchBox: 'input[name="search-box"]',
         searchResults: 'a.search-results',
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
-        // NEW: Selectors for Size and UOM fields
         cleanedSize: 'input[name="Woflow Cleaned Size"]',
-        cleanedUom: 'input[aria-labelledby="vs9__combobox"]', // UOM is often a vue-select dropdown
+        cleanedUom: 'input[aria-labelledby="vs9__combobox"]',
     };
 
     // --- Global State and Caching ---
     let isUpdatingComparison = false;
     const dictionaries = [];
     const domCache = {
-        cleanedItemNameTextarea: null,
-        searchBoxInput: null,
-        woflowBrandPathInput: null,
-        allDivs: [],
-        // NEW: Cache for Size and UOM
-        cleanedSizeInput: null,
-        cleanedUomDropdown: null,
+        cleanedItemNameTextarea: null, searchBoxInput: null, woflowBrandPathInput: null,
+        allDivs: [], cleanedSizeInput: null, cleanedUomDropdown: null,
     };
 
     // --- Utility Functions ---
@@ -82,47 +87,15 @@
     const regexEscape = (str) => str.replace(/[-\/\^$*+?.()|[\]{}]/g, '\$&');
     const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "'");
 
-    if (window.__autoFillObserver) {
-        window.__autoFillObserver.disconnect();
-        delete window.__autoFillObserver;
-    }
+    if (window.__autoFillObserver) { window.__autoFillObserver.disconnect(); delete window.__autoFillObserver; }
 
-    function findDivByTextPrefix(prefix) {
-        return domCache.allDivs.find(e => e.textContent.trim().startsWith(prefix)) || null;
-    }
-
+    function findDivByTextPrefix(prefix) { return domCache.allDivs.find(e => e.textContent.trim().startsWith(prefix)) || null; }
     function updateTextarea(textarea, value) {
         if (textarea) {
             textarea.value = value;
             textarea.dispatchEvent(new Event('input', { bubbles: true, passive: true }));
             textarea.dispatchEvent(new Event('change', { bubbles: true, passive: true }));
         }
-    }
-
-    function levenshtein(s1, s2) {
-        s1 = s1.toLowerCase();
-        s2 = s2.toLowerCase();
-        const costs = Array(s2.length + 1).fill(0).map((_, i) => i);
-        for (let i = 1; i <= s1.length; i++) {
-            let lastValue = i;
-            for (let j = 1; j <= s2.length; j++) {
-                const newValue = costs[j - 1] + (s1.charAt(i - 1) !== s2.charAt(j - 1) ? 1 : 0);
-                costs[j - 1] = lastValue;
-                lastValue = Math.min(costs[j] + 1, newValue, lastValue + 1);
-            }
-            costs[s2.length] = lastValue;
-        }
-        return costs[s2.length];
-    }
-
-    async function loadScript(url) {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = url;
-            script.onload = resolve;
-            script.onerror = reject;
-            document.head.appendChild(script);
-        });
     }
 
     async function loadTypoLibrary() {
@@ -134,9 +107,7 @@
                 return new Typo(dictConfig.name, await affResponse.text(), await dicResponse.text());
             });
             dictionaries.push(...(await Promise.all(dictPromises)));
-        } catch (error) {
-            console.error("Could not load Typo spell-checking library.", error);
-        }
+        } catch (error) { console.error("Could not load Typo library.", error); }
     }
 
     function runSmartComparison() {
@@ -155,57 +126,37 @@
             return;
         }
         domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
-
         const originalWords = originalValue.split(/\s+/).filter(Boolean);
         const textareaWords = textareaValue.split(/\s+/).filter(Boolean);
         const textareaWordMap = new Map(textareaWords.map(w => [w.toLowerCase(), { word: w, used: false }]));
         const missingWords = [];
-
         originalWords.forEach(origWord => {
             const lowerOrigWord = origWord.toLowerCase();
             if (textareaWordMap.has(lowerOrigWord) && !textareaWordMap.get(lowerOrigWord).used) {
-                textareaWordMap.get(lowerOrigWord).used = true;
-                return;
+                textareaWordMap.get(lowerOrigWord).used = true; return;
             }
-            let bestMatch = null;
-            let minDistance = LEVENSHTEIN_TYPO_THRESHOLD;
+            let bestMatch = null; let minDistance = LEVENSHTEIN_TYPO_THRESHOLD;
             for (const [lowerTextWord, data] of textareaWordMap.entries()) {
                 if (!data.used) {
                     const distance = levenshtein(lowerOrigWord, lowerTextWord);
-                    if (distance < minDistance) {
-                        minDistance = distance;
-                        bestMatch = data;
-                    }
+                    if (distance < minDistance) { minDistance = distance; bestMatch = data; }
                 }
             }
-            if (bestMatch) {
-                bestMatch.used = true;
-            } else {
-                missingWords.push(origWord);
-            }
+            if (bestMatch) { bestMatch.used = true; } else { missingWords.push(origWord); }
         });
-
         if (missingWords.length > 0) {
             const highlightRegex = new RegExp(`\\b(${missingWords.map(regexEscape).join('|')})\\b`, 'gi');
-            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
-                (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
-            );
-        } else {
-            originalBTag.innerHTML = escapeHtml(originalValue);
-        }
+            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex, (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`);
+        } else { originalBTag.innerHTML = escapeHtml(originalValue); }
     }
 
     let isTextareaListenerAttached = false;
     function runAllComparisons() {
-        if (isUpdatingComparison) return;
-        runSmartComparison();
+        if (isUpdatingComparison) return; runSmartComparison();
         if (!isTextareaListenerAttached && domCache.cleanedItemNameTextarea) {
             let debounceTimer;
             domCache.cleanedItemNameTextarea.addEventListener('input', () => {
-                if (!isUpdatingComparison) {
-                    clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(runSmartComparison, 300);
-                }
+                if (!isUpdatingComparison) { clearTimeout(debounceTimer); debounceTimer = setTimeout(runSmartComparison, 300); }
             }, { passive: true });
             isTextareaListenerAttached = true;
         }
@@ -215,10 +166,7 @@
     const mutationObserver = new MutationObserver(() => {
         if (!isUpdatingComparison) {
             clearTimeout(observerTimer);
-            observerTimer = setTimeout(() => {
-                domCache.allDivs = [...document.querySelectorAll("div")];
-                runAllComparisons();
-            }, 300);
+            observerTimer = setTimeout(() => { domCache.allDivs = [...document.querySelectorAll("div")]; runAllComparisons(); }, 300);
         }
     });
 
@@ -239,60 +187,52 @@
                 const keywords = row.Keyword?.split(",").map(kw => normalizeText(kw.trim())).filter(Boolean);
                 if (!keywords || keywords.length === 0) continue;
                 for (const text of divContentMap.values()) {
-                    for (const keyword of keywords) {
-                        if (text.includes(keyword)) {
-                            return row;
-                        }
-                    }
+                    for (const keyword of keywords) { if (text.includes(keyword)) { return row; } }
                 }
             }
             return null;
         } catch (error) {
-            alert('❌ Could not connect to the Google Sheet. Please check your connection and try again.');
-            console.error('Google Sheet fetch error:', error);
+            alert('❌ Could not connect to the Google Sheet.'); console.error('Google Sheet fetch error:', error);
             return null;
         }
     }
 
-    async function fillDropdown(comboboxId, valueToSelect) {
+    async function fillDropdown(comboboxSelector, valueToSelect) {
         if (!valueToSelect) return;
-        const inputElement = document.querySelector(comboboxId.startsWith('#vs') || comboboxId.startsWith('vs') ? `input[aria-labelledby="${comboboxId.replace('#','')}"]` : comboboxId);
+        const inputElement = document.querySelector(comboboxSelector);
         if (!inputElement) return;
-        inputElement.focus();
-        inputElement.click();
-        await delay(FAST_DELAY_MS);
-        inputElement.value = valueToSelect;
+        inputElement.focus(); inputElement.click(); await delay(FAST_DELAY_MS);
+        inputElement.value = Array.isArray(valueToSelect) ? valueToSelect[0] : valueToSelect; // Use first alias for typing
         inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
         await delay(FAST_DELAY_MS);
+        
+        // Use an array for matching
+        const valuesToFind = (Array.isArray(valueToSelect) ? valueToSelect : [valueToSelect]).map(v => normalizeText(v));
+
         const targetOption = [...document.querySelectorAll(SELECTORS.dropdownOption)]
-            .find(option => normalizeText(option.textContent) === normalizeText(valueToSelect));
+            .find(option => valuesToFind.includes(normalizeText(option.textContent)));
+        
         if (targetOption) {
             targetOption.click();
         } else {
-             const baseId = comboboxId.replace('input[aria-labelledby="', '').replace('"]','');
-             const clearButton = document.querySelector(`#${baseId} + .vs__actions .vs__clear`);
-             if (clearButton) clearButton.click();
+            const baseId = comboboxSelector.match(/vs\d+__combobox/)?.[0];
+            if(baseId) {
+                const clearButton = document.querySelector(`#${baseId} + .vs__actions .vs__clear`);
+                if (clearButton) clearButton.click();
+            }
         }
         await delay(INTERACTION_DELAY_MS);
     }
     
-    // --- NEW: Size and UOM Extraction Function ---
+    // --- UPDATED: Size and UOM Extraction Function ---
     async function extractAndFillSize() {
-        // Safety check: Don't run if fields are already filled.
         if (domCache.cleanedSizeInput?.value || domCache.cleanedUomDropdown?.value) {
             return;
         }
 
-        // Regex to find a number (integer or decimal) followed by a unit.
-        const sizeRegex = /(\d*\.?\d+)\s*[-]?\s*(fl\s*oz|oz|g|kg|ml|l|lb|ct|pk|pack|count|gallon|gal|quart|qt|pint|pt)\b/i;
-
-        // Map of found units to the standardized value in the dropdown.
-        const uomMap = {
-            'oz': 'Ounce', 'fl oz': 'Fluid Ounce', 'g': 'Gram', 'kg': 'Kilogram',
-            'ml': 'Milliliter', 'l': 'Liter', 'lb': 'Pound', 'ct': 'Count',
-            'pk': 'Pack', 'pack': 'Pack', 'count': 'Count', 'gallon': 'Gallon',
-            'gal': 'Gallon', 'quart': 'Quart', 'qt': 'Quart', 'pint': 'Pint', 'pt': 'Pint'
-        };
+        // Dynamically build the regex from all text aliases in UOM_DEFINITIONS
+        const allUomTextAliases = UOM_DEFINITIONS.flatMap(u => u.textAliases).sort((a, b) => b.length - a.length);
+        const sizeRegex = new RegExp(`(\\d*\\.?\\d+)\\s*[-]?\\s*(${allUomTextAliases.map(regexEscape).join('|')})\\b`, 'i');
 
         const textSources = [
             findDivByTextPrefix("Original Item Name :"),
@@ -308,32 +248,26 @@
 
             if (match) {
                 const sizeValue = match[1];
-                const uomValue = match[2].toLowerCase().replace(/\s/g, ''); // e.g., "fl oz" -> "floz"
-                const mappedUom = uomMap[uomValue.replace('fl', 'fl ')]; // re-add space for mapping
-
-                 if (!mappedUom) {
-                   const singleUom = uomMap[uomValue];
-                   if(!singleUom) continue; // Not a UOM we can map
-                   
-                   updateTextarea(domCache.cleanedSizeInput, sizeValue);
-                   await fillDropdown(SELECTORS.cleanedUom, singleUom);
-                   console.log(`Filled Size: ${sizeValue}, UOM: ${singleUom}`);
-                   return; // Stop after the first successful find
-                 }
+                const uomFound = normalizeText(match[2]);
                 
-                updateTextarea(domCache.cleanedSizeInput, sizeValue);
-                await fillDropdown(SELECTORS.cleanedUom, mappedUom);
-                console.log(`Filled Size: ${sizeValue}, UOM: ${mappedUom}`);
-                return; // Stop after the first successful find
+                // Find the UOM definition that matches the found text
+                const uomDefinition = UOM_DEFINITIONS.find(u => u.textAliases.includes(uomFound));
+
+                if (uomDefinition) {
+                    updateTextarea(domCache.cleanedSizeInput, sizeValue);
+                    // Pass all possible dropdown aliases to the fill function
+                    await fillDropdown(SELECTORS.cleanedUom, uomDefinition.dropdownAliases);
+                    console.log(`Filled Size: ${sizeValue}, Attempted UOM with: ${uomDefinition.dropdownAliases.join(', ')}`);
+                    return; // Stop after the first successful find
+                }
             }
         }
     }
 
-
     async function runAutoFill() {
         const matchedSheetRow = await processGoogleSheetData();
         if (!matchedSheetRow) {
-            console.log("No matching rule found in Google Sheet for auto-filling.");
+            console.log("No matching rule found in sheet.");
             return;
         }
         console.log("Sheet data loaded, filling form...");
@@ -346,35 +280,49 @@
         ];
         for (const config of dropdownConfigs) {
             const value = matchedSheetRow[config.sheetColumn]?.trim() || config.defaultValue;
-            await fillDropdown(config.id, value);
+            const selector = `input[aria-labelledby="${config.id}"]`;
+            await fillDropdown(selector, value);
         }
         if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
             updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
         }
         console.log("Auto-fill complete!");
     }
+    
+    // Levenshtein function, needed by runSmartComparison
+    function levenshtein(s1, s2) {
+        s1 = s1.toLowerCase(); s2 = s2.toLowerCase();
+        const costs = Array(s2.length + 1).fill(0).map((_, i) => i);
+        for (let i = 1; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 1; j <= s2.length; j++) {
+                const newValue = costs[j - 1] + (s1.charAt(i - 1) !== s2.charAt(j - 1) ? 1 : 0);
+                costs[j - 1] = lastValue;
+                lastValue = Math.min(costs[j] + 1, newValue, lastValue + 1);
+            }
+            costs[s2.length] = lastValue;
+        }
+        return costs[s2.length];
+    }
 
     // --- Main Execution Flow ---
     async function main() {
-        // Initial DOM cache
-        domCache.cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
-        domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
-        domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
-        domCache.cleanedSizeInput = document.querySelector(SELECTORS.cleanedSize);
-        domCache.cleanedUomDropdown = document.querySelector(SELECTORS.cleanedUom);
+        Object.keys(SELECTORS).forEach(key => {
+            const cacheKey = key === 'cleanedUom' ? 'cleanedUomDropdown' : `${key}Input`;
+            if (key.includes('ItemName')) {
+                 domCache[`${key}Textarea`] = document.querySelector(SELECTORS[key]);
+            } else {
+                 domCache[cacheKey] = document.querySelector(SELECTORS[key]);
+            }
+        });
         domCache.allDivs = [...document.querySelectorAll("div")];
         
         window.__autoFillObserver = mutationObserver;
         mutationObserver.observe(document.body, { childList: true, subtree: true });
 
         await loadTypoLibrary();
-        
         runAllComparisons();
-        
-        // Run new size extraction first
         await extractAndFillSize();
-
-        // Then run the sheet-based autofill
         await runAutoFill();
     }
 
