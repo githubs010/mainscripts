@@ -105,6 +105,48 @@
         }
         return costs[s2.length];
     }
+
+    async function loadScript(url) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = url;
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+    }
+
+    async function loadTypoLibrary() {
+        try {
+            if (typeof Typo === 'undefined') await loadScript(TYPO_CONFIG.libURL);
+            const dictPromises = TYPO_CONFIG.dictionaries.map(async dictConfig => {
+                const [affResponse, dicResponse] = await Promise.all([fetch(dictConfig.affURL), fetch(dictConfig.dicURL)]);
+                return new Typo(dictConfig.name, await affResponse.text(), await dicResponse.text());
+            });
+            if (dictionaries.length === 0) dictionaries.push(...(await Promise.all(dictPromises)));
+        } catch (error) {
+            console.error("Could not load Typo library.", error);
+        }
+    }
+
+    function getSpellingSuggestions(words) {
+        if (dictionaries.length === 0) return [];
+        const suggestions = [];
+        const checkedWords = new Set();
+        for (const word of words) {
+            const cleanWord = word.replace(/['"(),.?]/g, '');
+            const lowerCleanWord = cleanWord.toLowerCase();
+            if (checkedWords.has(lowerCleanWord) || cleanWord.length <= TYPO_CONFIG.ignoreLength || /\d/.test(cleanWord) || cleanWord.toUpperCase() === cleanWord) continue;
+            checkedWords.add(lowerCleanWord);
+            if (!dictionaries.some(dict => dict.check(cleanWord))) {
+                const corrections = dictionaries[0].suggest(cleanWord);
+                if (corrections && corrections.length > 0) {
+                    suggestions.push({ type: 'spell', from: word, to: corrections[0] });
+                }
+            }
+        }
+        return suggestions;
+    }
     
     // --- FINAL: Full comparison logic with differentiated highlighting ---
     function runSmartComparison() {
@@ -126,9 +168,9 @@
 
         const textareaWordMap = new Map();
         textareaWords.forEach(word => {
-            const lowerWord = word.toLowerCase();
-            if (!textareaWordMap.has(lowerWord)) textareaWordMap.set(lowerWord, []);
-            textareaWordMap.get(lowerWord).push({ word: word, used: false });
+            const lower = word.toLowerCase();
+            if (!textareaWordMap.has(lower)) textareaWordMap.set(lower, []);
+            textareaWordMap.get(lower).push({ word: word, used: false });
         });
 
         const matchedOriginalIndices = new Set();
@@ -168,19 +210,28 @@
         const brandWords = getWords(brandPathValue.toLowerCase());
         const originalDisplayWords = getWords(originalValue);
         
-        const missingFromBrand = missingWords.filter(w => brandWords.includes(w.toLowerCase()));
-        const missingFromOriginal = missingWords.filter(w => originalDisplayWords.map(wd => wd.toLowerCase()).includes(w.toLowerCase()));
-        
-        // 1. Highlight Brand Input
-        domCache.woflowBrandPathInput.style.backgroundColor = missingFromBrand.length > 0 ? '#d0ebff' : '';
+        // --- NEW HIGHLIGHTING LOGIC ---
+        const newHtml = originalDisplayWords.map(word => {
+            const lowerWord = word.toLowerCase();
+            const isMissing = missingWords.map(w => w.toLowerCase()).includes(lowerWord);
+            const isBrandWord = brandWords.includes(lowerWord);
 
-        // 2. Highlight Original Item Name
-        if (missingFromOriginal.length > 0) {
-            const highlightRegex = new RegExp(`\\b(${missingFromOriginal.map(regexEscape).join('|')})\\b`, 'gi');
-            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex, match => `<span style="background-color: #FFF3A3;">${match}</span>`);
-        } else {
-            originalBTag.innerHTML = escapeHtml(originalValue);
-        }
+            if (isMissing) {
+                if (isBrandWord) {
+                    // It's a missing word that is part of the brand. Highlight light blue.
+                    return `<span style="background-color: #d0ebff;">${escapeHtml(word)}</span>`;
+                } else {
+                    // It's a missing word from the original name (but not brand). Highlight yellow.
+                    return `<span style="background-color: #FFF3A3;">${escapeHtml(word)}</span>`;
+                }
+            }
+            return escapeHtml(word); // Not missing, no highlight.
+        }).join(' ');
+
+        originalBTag.innerHTML = newHtml;
+        domCache.woflowBrandPathInput.style.backgroundColor = ''; // Ensure brand input is not highlighted
+        
+        // --- End of New Highlighting Logic ---
         
         // 3. Display Excess Words
         let excessWordsDiv = document.getElementById('excess-words-display');
@@ -264,6 +315,47 @@
         }
         await delay(INTERACTION_DELAY_MS);
     }
+    
+    // --- AUTO-SEARCH FUNCTION (RESTORED) ---
+    async function runSearchAutomation(cleanedItemName) {
+        if (!domCache.searchBoxInput || !cleanedItemName) return;
+        const words = cleanedItemName.split(/\s+/).filter(Boolean);
+        if (words.length === 0) return;
+        domCache.searchBoxInput.focus();
+        domCache.searchBoxInput.click();
+        await delay(FAST_DELAY_MS);
+        let potentialSearchTerms = [];
+        if (words.length >= 2) potentialSearchTerms.push(words.slice(0, 2).join(' '));
+        potentialSearchTerms.push(words[0]);
+        for (const searchTerm of potentialSearchTerms) {
+            updateTextarea(domCache.searchBoxInput, searchTerm);
+            domCache.searchBoxInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, passive: true }));
+            await delay(SEARCH_DELAY_MS);
+            const currentResults = document.querySelectorAll(SELECTORS.searchResults);
+            if (currentResults.length > 0) {
+                let bestMatchElement = null;
+                let minLevDistance = Infinity;
+                const targetTextNormalized = normalizeText(cleanedItemName);
+                for (const result of currentResults) {
+                    const resultTextNormalized = normalizeText(result.textContent);
+                    if (resultTextNormalized === targetTextNormalized) {
+                        result.click();
+                        return;
+                    }
+                    const distance = levenshtein(targetTextNormalized, resultTextNormalized);
+                    if (distance < minLevDistance) {
+                        minLevDistance = distance;
+                        bestMatchElement = result;
+                    }
+                }
+                if (bestMatchElement && (minLevDistance / Math.max(targetTextNormalized.length, bestMatchElement.textContent.length) < 0.3)) {
+                    bestMatchElement.click();
+                }
+                return;
+            }
+        }
+    }
+
 
     // --- Main Execution Flow ---
     domCache.cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
@@ -272,6 +364,7 @@
     window.__autoFillObserver = mutationObserver;
     mutationObserver.observe(document.body, { childList: true, subtree: true });
 
+    await loadTypoLibrary();
     runAllComparisons();
     const matchedSheetRow = await processGoogleSheetData();
     if (!matchedSheetRow) return;
@@ -288,5 +381,9 @@
     }
     if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
         updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
+    }
+    // --- RUN AUTO-SEARCH (RESTORED) ---
+    if (domCache.cleanedItemNameTextarea) {
+        await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
     }
 })();
