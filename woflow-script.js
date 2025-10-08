@@ -6,6 +6,7 @@
     // --- 🔑 START: DYNAMIC ACCESS CONTROL ---
     async function getAuthorizedUsers(sheetUrl) {
         try {
+            // Assumes your Google Sheet has a second tab (sheet) named "Users"
             const usersSheetUrl = sheetUrl.replace('/Sheet1', '/Users');
             const response = await fetch(usersSheetUrl);
             if (!response.ok) {
@@ -13,6 +14,7 @@
                 return [FALLBACK_ADMIN];
             }
             const users = await response.json();
+            // Assumes the "Users" sheet has a column header named "username"
             return users.map(user => user.username.toLowerCase()).filter(Boolean);
         } catch (e) {
             console.error("Error fetching users, using fallback.", e);
@@ -79,7 +81,7 @@
         }
     }
     
-    // --- NEW: Simplified comparison logic to find only missing words ---
+    // --- NEW: Logic to highlight missing brand words in light blue ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
 
@@ -96,19 +98,19 @@
         
         // Helper to get clean, unique words from a string
         const getWords = (str) => {
-            // Removes punctuation and gets unique words
             return new Set(str.toLowerCase().match(/\b[\w\d]+\b/g) || []);
         };
 
-        // 2. Combine sources and get unique words from all fields
+        // 2. Get unique words from all sources
         const sourceWords = getWords(brandPathValue + " " + originalValue);
+        const brandWords = getWords(brandPathValue);
         const cleanedWords = getWords(cleanedValue);
 
         // 3. Find words in the source that are NOT in the cleaned name
-        const missingWords = [...sourceWords].filter(word => !cleanedWords.has(word));
+        const missingWords = new Set([...sourceWords].filter(word => !cleanedWords.has(word)));
         
         // 4. Update UI based on results
-        if (missingWords.length === 0) {
+        if (missingWords.size === 0) {
             // Perfect match - highlight green
             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
             originalBTag.innerHTML = escapeHtml(originalValue); // Remove any previous highlighting
@@ -116,13 +118,22 @@
             // Mismatch - highlight red and show missing words
             domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
             
-            // Create a regex to find and highlight all missing words
-            const highlightRegex = new RegExp(`\\b(${missingWords.map(regexEscape).join('|')})\\b`, 'gi');
+            // Reconstruct the original item name with specific highlights
+            const originalItemWords = originalValue.split(/(\s+|&)/); // Split by space or ampersand to keep them
+            const highlightedHtml = originalItemWords.map(part => {
+                const cleanPart = (part.match(/\b[\w\d]+\b/g) || [])[0]?.toLowerCase();
+                if (cleanPart && missingWords.has(cleanPart)) {
+                    // Check if the missing word is from the brand to apply the correct color
+                    if (brandWords.has(cleanPart)) {
+                        return `<span style="background-color: #ADD8E6; border-radius: 2px;">${escapeHtml(part)}</span>`; // Light Blue for Brand
+                    } else {
+                        return `<span style="background-color: #FFF3A3; border-radius: 2px;">${escapeHtml(part)}</span>`; // Yellow for other missing words
+                    }
+                }
+                return escapeHtml(part);
+            }).join('');
             
-            // Apply highlighting to the original item name text
-            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
-                (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
-            );
+            originalBTag.innerHTML = highlightedHtml;
         }
     }
 
@@ -222,7 +233,6 @@
             const currentResults = document.querySelectorAll(SELECTORS.searchResults);
             if (currentResults.length > 0) {
                 let bestMatchElement = null;
-                let minLevDistance = Infinity;
                 const targetTextNormalized = normalizeText(cleanedItemName);
                 for (const result of currentResults) {
                     const resultTextNormalized = normalizeText(result.textContent);
