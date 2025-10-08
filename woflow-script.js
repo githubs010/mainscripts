@@ -45,7 +45,6 @@
         "itemName :", "Mx Provided WI Flag :", "WI Type :", "L1 Name :", "Woflow Notes :", "Exclude :", "Invalid Reason :",
         "upc :", "itemMerchantSuppliedId :"
     ];
-    // --- IMPROVEMENT: Increased Levenshtein threshold for more flexible typo matching ---
     const LEVENSHTEIN_TYPO_THRESHOLD = 5;
     const FAST_DELAY_MS = 50;
     const INTERACTION_DELAY_MS = 100;
@@ -156,22 +155,26 @@
         return suggestions;
     }
     
-    // --- IMPROVEMENT: High-accuracy comparison logic for missing and excess words ---
+    // --- IMPROVEMENT: Compares 'brand_path' + 'Original Item Name' against 'Cleaned Item Name' ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
-        if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea) return;
+        // --- MODIFICATION START ---
+        if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea || !domCache.woflowBrandPathInput) return;
         const originalBTag = originalItemNameDiv.querySelector("b");
         if (!originalBTag) return;
         
+        // Combine brand_path and original item name for a full comparison
+        const brandPathValue = domCache.woflowBrandPathInput.value.trim();
         const originalValue = originalBTag.textContent.trim();
+        const combinedOriginal = (brandPathValue + " " + originalValue).trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
-        
-        // Quick check for perfect match (ignoring word order)
+        // --- MODIFICATION END ---
+
         const getSortedNormalizedWords = (str) => normalizeText(str).split(/\s+/).filter(Boolean).sort().join(' ');
-        if (getSortedNormalizedWords(originalValue) === getSortedNormalizedWords(textareaValue)) {
+        if (getSortedNormalizedWords(combinedOriginal) === getSortedNormalizedWords(textareaValue)) {
             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
-            originalBTag.innerHTML = escapeHtml(originalValue);
+            originalBTag.innerHTML = escapeHtml(originalValue); // Keep original display
             let excessWordsDiv = document.getElementById('excess-words-display');
             if (excessWordsDiv) excessWordsDiv.style.display = 'none';
             return;
@@ -179,7 +182,6 @@
         
         domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
         
-        // --- NEW: Create or clear a div for displaying excess words ---
         let excessWordsDiv = document.getElementById('excess-words-display');
         if (!excessWordsDiv) {
             excessWordsDiv = document.createElement('div');
@@ -195,10 +197,12 @@
         }
         excessWordsDiv.style.display = 'none';
 
-        const originalWords = originalValue.split(/\s+/).filter(Boolean);
+        // --- MODIFICATION START ---
+        // Use the combined string for word analysis
+        const originalWords = combinedOriginal.split(/\s+/).filter(Boolean);
         const textareaWords = textareaValue.split(/\s+/).filter(Boolean);
-
-        // --- FIX: Handle duplicate words correctly by mapping to an array of occurrences ---
+        // --- MODIFICATION END ---
+        
         const textareaWordMap = new Map();
         textareaWords.forEach(word => {
             const lowerWord = word.toLowerCase();
@@ -210,7 +214,6 @@
 
         const matchedOriginalIndices = new Set();
 
-        // Pass 1: Find exact matches first to ensure 100% accuracy on identical words
         originalWords.forEach((origWord, index) => {
             const lowerOrigWord = origWord.toLowerCase();
             const occurrences = textareaWordMap.get(lowerOrigWord);
@@ -223,9 +226,8 @@
             }
         });
 
-        // Pass 2: Find typo-based matches for the remaining original words
         originalWords.forEach((origWord, index) => {
-            if (matchedOriginalIndices.has(index)) return; // Already had an exact match
+            if (matchedOriginalIndices.has(index)) return;
 
             const lowerOrigWord = origWord.toLowerCase();
             let bestMatch = null;
@@ -238,7 +240,6 @@
                         if (distance < minDistance) {
                              const shorterLength = Math.min(lowerOrigWord.length, occurrence.word.length);
                              const relativeDistance = shorterLength > 0 ? distance / shorterLength : Infinity;
-                            // Add a relative distance check to avoid matching completely different short words
                             if (relativeDistance < 0.6) {
                                 minDistance = distance;
                                 bestMatch = occurrence;
@@ -254,7 +255,6 @@
             }
         });
 
-        // Collect all unmatched words from original (missing) and textarea (excess)
         const missingWords = originalWords.filter((_, index) => !matchedOriginalIndices.has(index));
         const excessWords = [];
         for (const occurrences of textareaWordMap.values()) {
@@ -266,24 +266,41 @@
         }
 
         // --- UPDATE HIGHLIGHTING ---
-        // Highlight missing words in the original text
+        // Highlight missing words from the combined string in the original item name field for visibility
         if (missingWords.length > 0) {
             const uniqueMissingWords = [...new Set(missingWords)];
-            const highlightRegex = new RegExp(`\\b(${uniqueMissingWords.map(regexEscape).join('|')})\\b`, 'gi');
-            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
-                (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
-            );
+            const brandWords = brandPathValue.split(/\s+/).filter(Boolean);
+            const originalItemWords = originalValue.split(/\s+/).filter(Boolean);
+            
+            // Highlight brand words if they are missing
+            const brandHighlightHtml = brandWords.map(word => {
+                if (uniqueMissingWords.includes(word)) {
+                    return `<span style="background-color: #FFDDC1; border-radius: 2px;">${escapeHtml(word)}</span>`;
+                }
+                return escapeHtml(word);
+            }).join(' ');
+
+            // Highlight original item name words if they are missing
+            const itemHighlightHtml = originalItemWords.map(word => {
+                 if (uniqueMissingWords.includes(word)) {
+                    return `<span style="background-color: #FFF3A3; border-radius: 2px;">${escapeHtml(word)}</span>`;
+                }
+                return escapeHtml(word);
+            }).join(' ');
+
+            // To avoid disrupting the UI, we only modify the Original Item Name's B-tag
+            originalBTag.innerHTML = itemHighlightHtml;
+            // Note: We are not displaying the missing brand words in the UI to prevent layout shifts. They are still part of the logic.
+
         } else {
             originalBTag.innerHTML = escapeHtml(originalValue);
         }
 
-        // Display excess words clearly below the textarea
         if (excessWords.length > 0) {
             excessWordsDiv.innerHTML = `<strong>Excess Words:</strong> ${excessWords.map(escapeHtml).join(' ')}`;
             excessWordsDiv.style.display = 'block';
         }
 
-        // Final check: if all words are accounted for, mark as correct
         if (missingWords.length === 0 && excessWords.length === 0) {
              domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
              if (excessWordsDiv) excessWordsDiv.style.display = 'none';
@@ -297,12 +314,14 @@
         runSmartComparison();
         if (!isTextareaListenerAttached && domCache.cleanedItemNameTextarea) {
             let debounceTimer;
-            domCache.cleanedItemNameTextarea.addEventListener('input', () => {
-                if (!isUpdatingComparison) {
+            const listener = () => {
+                 if (!isUpdatingComparison) {
                     clearTimeout(debounceTimer);
                     debounceTimer = setTimeout(runSmartComparison, 300);
                 }
-            }, { passive: true });
+            };
+            domCache.cleanedItemNameTextarea.addEventListener('input', listener, { passive: true });
+            domCache.woflowBrandPathInput?.addEventListener('input', listener, { passive: true }); // Also re-run on brand change
             isTextareaListenerAttached = true;
         }
     }
@@ -341,7 +360,6 @@
             }
             return null;
         } catch (error) {
-            // Provide better feedback to the user
             alert('❌ Could not connect to the Google Sheet. Please check your connection and try again.');
             console.error('Google Sheet fetch error:', error);
             return null;
