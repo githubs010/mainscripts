@@ -45,7 +45,8 @@
         "itemName :", "Mx Provided WI Flag :", "WI Type :", "L1 Name :", "Woflow Notes :", "Exclude :", "Invalid Reason :",
         "upc :", "itemMerchantSuppliedId :"
     ];
-    const LEVENSHTEIN_TYPO_THRESHOLD = 5; // Increased threshold
+    // --- IMPROVEMENT: Increased Levenshtein threshold for more flexible typo matching ---
+    const LEVENSHTEIN_TYPO_THRESHOLD = 5;
     const FAST_DELAY_MS = 50;
     const INTERACTION_DELAY_MS = 100;
     const SEARCH_DELAY_MS = 400;
@@ -154,80 +155,141 @@
         }
         return suggestions;
     }
-
+    
+    // --- IMPROVEMENT: High-accuracy comparison logic for missing and excess words ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
         if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea) return;
         const originalBTag = originalItemNameDiv.querySelector("b");
         if (!originalBTag) return;
+        
         const originalValue = originalBTag.textContent.trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
+        
+        // Quick check for perfect match (ignoring word order)
         const getSortedNormalizedWords = (str) => normalizeText(str).split(/\s+/).filter(Boolean).sort().join(' ');
         if (getSortedNormalizedWords(originalValue) === getSortedNormalizedWords(textareaValue)) {
             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
             originalBTag.innerHTML = escapeHtml(originalValue);
+            let excessWordsDiv = document.getElementById('excess-words-display');
+            if (excessWordsDiv) excessWordsDiv.style.display = 'none';
             return;
         }
+        
+        domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
+        
+        // --- NEW: Create or clear a div for displaying excess words ---
+        let excessWordsDiv = document.getElementById('excess-words-display');
+        if (!excessWordsDiv) {
+            excessWordsDiv = document.createElement('div');
+            excessWordsDiv.id = 'excess-words-display';
+            excessWordsDiv.style.padding = '5px';
+            excessWordsDiv.style.marginTop = '5px';
+            excessWordsDiv.style.border = '1px solid #f5c6cb';
+            excessWordsDiv.style.borderRadius = '4px';
+            excessWordsDiv.style.backgroundColor = '#f8d7da';
+            excessWordsDiv.style.color = '#721c24';
+            excessWordsDiv.style.fontSize = '12px';
+            domCache.cleanedItemNameTextarea.parentNode.insertBefore(excessWordsDiv, domCache.cleanedItemNameTextarea.nextSibling);
+        }
+        excessWordsDiv.style.display = 'none';
 
         const originalWords = originalValue.split(/\s+/).filter(Boolean);
         const textareaWords = textareaValue.split(/\s+/).filter(Boolean);
-        const textareaWordMap = new Map(textareaWords.map((w, i) => [i, { word: w, used: false }]));
-        const originalWordMatches = new Array(originalWords.length).fill(false);
 
-        // First pass: exact matches
-        originalWords.forEach((origWord, i) => {
-            for (const [key, data] of textareaWordMap.entries()) {
-                if (!data.used && normalizeText(origWord) === normalizeText(data.word)) {
-                    data.used = true;
-                    originalWordMatches[i] = true;
-                    break;
+        // --- FIX: Handle duplicate words correctly by mapping to an array of occurrences ---
+        const textareaWordMap = new Map();
+        textareaWords.forEach(word => {
+            const lowerWord = word.toLowerCase();
+            if (!textareaWordMap.has(lowerWord)) {
+                textareaWordMap.set(lowerWord, []);
+            }
+            textareaWordMap.get(lowerWord).push({ word: word, used: false });
+        });
+
+        const matchedOriginalIndices = new Set();
+
+        // Pass 1: Find exact matches first to ensure 100% accuracy on identical words
+        originalWords.forEach((origWord, index) => {
+            const lowerOrigWord = origWord.toLowerCase();
+            const occurrences = textareaWordMap.get(lowerOrigWord);
+            if (occurrences) {
+                const unusedOccurrence = occurrences.find(occ => !occ.used);
+                if (unusedOccurrence) {
+                    unusedOccurrence.used = true;
+                    matchedOriginalIndices.add(index);
                 }
             }
         });
 
-        // Second pass: fuzzy matches
-        originalWords.forEach((origWord, i) => {
-            if (originalWordMatches[i]) return;
+        // Pass 2: Find typo-based matches for the remaining original words
+        originalWords.forEach((origWord, index) => {
+            if (matchedOriginalIndices.has(index)) return; // Already had an exact match
 
+            const lowerOrigWord = origWord.toLowerCase();
             let bestMatch = null;
             let minDistance = LEVENSHTEIN_TYPO_THRESHOLD;
 
-            for (const [key, data] of textareaWordMap.entries()) {
-                if (!data.used) {
-                    const distance = levenshtein(origWord, data.word);
-                    if (distance < minDistance) {
-                        minDistance = distance;
-                        bestMatch = data;
+            for (const [, occurrences] of textareaWordMap.entries()) {
+                for (const occurrence of occurrences) {
+                    if (!occurrence.used) {
+                        const distance = levenshtein(lowerOrigWord, occurrence.word.toLowerCase());
+                        if (distance < minDistance) {
+                             const shorterLength = Math.min(lowerOrigWord.length, occurrence.word.length);
+                             const relativeDistance = shorterLength > 0 ? distance / shorterLength : Infinity;
+                            // Add a relative distance check to avoid matching completely different short words
+                            if (relativeDistance < 0.6) {
+                                minDistance = distance;
+                                bestMatch = occurrence;
+                            }
+                        }
                     }
                 }
             }
+            
             if (bestMatch) {
                 bestMatch.used = true;
-                originalWordMatches[i] = true;
+                matchedOriginalIndices.add(index);
             }
         });
 
-        const missingWords = originalWords.filter((_, i) => !originalWordMatches[i]);
-        const excessWords = Array.from(textareaWordMap.values()).filter(data => !data.used).map(data => data.word);
+        // Collect all unmatched words from original (missing) and textarea (excess)
+        const missingWords = originalWords.filter((_, index) => !matchedOriginalIndices.has(index));
+        const excessWords = [];
+        for (const occurrences of textareaWordMap.values()) {
+            occurrences.forEach(occ => {
+                if (!occ.used) {
+                    excessWords.push(occ.word);
+                }
+            });
+        }
 
-        // Highlight missing words in original
+        // --- UPDATE HIGHLIGHTING ---
+        // Highlight missing words in the original text
         if (missingWords.length > 0) {
-            const highlightRegex = new RegExp(`\b(${missingWords.map(regexEscape).join('|')})\b`, 'gi');
+            const uniqueMissingWords = [...new Set(missingWords)];
+            const highlightRegex = new RegExp(`\\b(${uniqueMissingWords.map(regexEscape).join('|')})\\b`, 'gi');
             originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
                 (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
             );
         } else {
             originalBTag.innerHTML = escapeHtml(originalValue);
         }
-        
-        // Highlight excess words in textarea
+
+        // Display excess words clearly below the textarea
         if (excessWords.length > 0) {
-            domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 220, 220, 0.4)";
-        } else {
-            domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
+            excessWordsDiv.innerHTML = `<strong>Excess Words:</strong> ${excessWords.map(escapeHtml).join(' ')}`;
+            excessWordsDiv.style.display = 'block';
+        }
+
+        // Final check: if all words are accounted for, mark as correct
+        if (missingWords.length === 0 && excessWords.length === 0) {
+             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
+             if (excessWordsDiv) excessWordsDiv.style.display = 'none';
         }
     }
+
 
     let isTextareaListenerAttached = false;
     function runAllComparisons() {
