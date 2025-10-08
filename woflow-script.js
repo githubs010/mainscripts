@@ -1,12 +1,11 @@
 (async function() {
     // --- CONFIGURATION ---
     const SHEET_URL = "https://opensheet.elk.sh/188552daH24yAiXUux5aHvqBNWOPRZPJeve2Nd6acRBA/Sheet1";
-    const FALLBACK_ADMIN = 'prasad'; // A default user if the sheet fails to load
+    const FALLBACK_ADMIN = 'prasad';
 
     // --- 🔑 START: DYNAMIC ACCESS CONTROL ---
     async function getAuthorizedUsers(sheetUrl) {
         try {
-            // Assumes your Google Sheet has a second tab (sheet) named "Users"
             const usersSheetUrl = sheetUrl.replace('/Sheet1', '/Users');
             const response = await fetch(usersSheetUrl);
             if (!response.ok) {
@@ -14,7 +13,6 @@
                 return [FALLBACK_ADMIN];
             }
             const users = await response.json();
-            // Assumes the "Users" sheet has a column header named "username"
             return users.map(user => user.username.toLowerCase()).filter(Boolean);
         } catch (e) {
             console.error("Error fetching users, using fallback.", e);
@@ -33,9 +31,19 @@
 
 
     // --- OPTIMIZATION: Constants ---
+    const TYPO_CONFIG = {
+        libURL: 'https://cdn.jsdelivr.net/npm/typo-js@1.2.1/typo.js',
+        dictionaries: [{ name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' }],
+        ignoreLength: 3
+    };
     const MONITORED_DIV_PREFIXES = [
-        "Original Item Name :", "Insert Woflow brand_path", "Insert Woflow Cleaned Item Name"
+        "Secondary UPC :", "Mx Provided Category 2 :", "Mx Provided Category 1 :", "Mx Provided Category 3 :",
+        "Original Brand Name :", "Mx Provided Product Description :", "Original Item Name :", "Mx Provided Descriptor(s) :",
+        "Mx Provided Size 2 :", "Original UOM :", "Original Size :", "Mx Provided CBD/THC Content :", "Photo Source :",
+        "itemName :", "Mx Provided WI Flag :", "WI Type :", "L1 Name :", "Woflow Notes :", "Exclude :", "Invalid Reason :",
+        "upc :", "itemMerchantSuppliedId :"
     ];
+    const LEVENSHTEIN_TYPO_THRESHOLD = 5;
     const FAST_DELAY_MS = 50;
     const INTERACTION_DELAY_MS = 100;
     const SEARCH_DELAY_MS = 400;
@@ -51,6 +59,7 @@
     // --- Global State and Caching ---
     let isUpdatingComparison = false;
     let isHighlightingEnabled = true;
+    const dictionaries = [];
     const domCache = {
         cleanedItemNameTextarea: null,
         searchBoxInput: null,
@@ -80,63 +89,115 @@
             textarea.dispatchEvent(new Event('change', { bubbles: true, passive: true }));
         }
     }
+
+    function levenshtein(s1, s2) {
+        s1 = s1.toLowerCase();
+        s2 = s2.toLowerCase();
+        const costs = Array(s2.length + 1).fill(0).map((_, i) => i);
+        for (let i = 1; i <= s1.length; i++) {
+            let lastValue = i;
+            for (let j = 1; j <= s2.length; j++) {
+                const newValue = costs[j - 1] + (s1.charAt(i - 1) !== s2.charAt(j - 1) ? 1 : 0);
+                costs[j - 1] = lastValue;
+                lastValue = Math.min(costs[j] + 1, newValue, lastValue + 1);
+            }
+            costs[s2.length] = lastValue;
+        }
+        return costs[s2.length];
+    }
     
-    // --- NEW: Logic to highlight missing brand words in light blue ---
+    // --- FINAL: Full comparison logic with differentiated highlighting ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
-
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
         if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea || !domCache.woflowBrandPathInput) return;
-
         const originalBTag = originalItemNameDiv.querySelector("b");
         if (!originalBTag) return;
 
-        // 1. Get values from all three fields
+        // --- Get values ---
         const brandPathValue = domCache.woflowBrandPathInput.value.trim();
         const originalValue = originalBTag.textContent.trim();
-        const cleanedValue = domCache.cleanedItemNameTextarea.value.trim();
-        
-        // Helper to get clean, unique words from a string
-        const getWords = (str) => {
-            return new Set(str.toLowerCase().match(/\b[\w\d]+\b/g) || []);
-        };
+        const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
 
-        // 2. Get unique words from all sources
-        const sourceWords = getWords(brandPathValue + " " + originalValue);
-        const brandWords = getWords(brandPathValue);
-        const cleanedWords = getWords(cleanedValue);
+        // --- Word Matching Logic (Levenshtein + Exact) ---
+        const getWords = (str) => str.split(/\s+/).filter(Boolean);
+        const combinedOriginalWords = getWords((brandPathValue + " " + originalValue).trim());
+        const textareaWords = getWords(textareaValue);
 
-        // 3. Find words in the source that are NOT in the cleaned name
-        const missingWords = new Set([...sourceWords].filter(word => !cleanedWords.has(word)));
-        
-        // 4. Update UI based on results
-        if (missingWords.size === 0) {
-            // Perfect match - highlight green
-            domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
-            originalBTag.innerHTML = escapeHtml(originalValue); // Remove any previous highlighting
-        } else {
-            // Mismatch - highlight red and show missing words
-            domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
-            
-            // Reconstruct the original item name with specific highlights
-            const originalItemWords = originalValue.split(/(\s+|&)/); // Split by space or ampersand to keep them
-            const highlightedHtml = originalItemWords.map(part => {
-                const cleanPart = (part.match(/\b[\w\d]+\b/g) || [])[0]?.toLowerCase();
-                if (cleanPart && missingWords.has(cleanPart)) {
-                    // Check if the missing word is from the brand to apply the correct color
-                    if (brandWords.has(cleanPart)) {
-                        return `<span style="background-color: #ADD8E6; border-radius: 2px;">${escapeHtml(part)}</span>`; // Light Blue for Brand
-                    } else {
-                        return `<span style="background-color: #FFF3A3; border-radius: 2px;">${escapeHtml(part)}</span>`; // Yellow for other missing words
+        const textareaWordMap = new Map();
+        textareaWords.forEach(word => {
+            const lowerWord = word.toLowerCase();
+            if (!textareaWordMap.has(lowerWord)) textareaWordMap.set(lowerWord, []);
+            textareaWordMap.get(lowerWord).push({ word: word, used: false });
+        });
+
+        const matchedOriginalIndices = new Set();
+        // Pass 1: Exact matches
+        combinedOriginalWords.forEach((origWord, index) => {
+            const lowerOrigWord = origWord.toLowerCase();
+            const occurrences = textareaWordMap.get(lowerOrigWord);
+            if (occurrences) {
+                const unused = occurrences.find(o => !o.used);
+                if (unused) { unused.used = true; matchedOriginalIndices.add(index); }
+            }
+        });
+        // Pass 2: Levenshtein typo matches
+        combinedOriginalWords.forEach((origWord, index) => {
+            if (matchedOriginalIndices.has(index)) return;
+            const lowerOrigWord = origWord.toLowerCase();
+            let bestMatch = null, minDistance = LEVENSHTEIN_TYPO_THRESHOLD;
+            for (const [, occurrences] of textareaWordMap.entries()) {
+                for (const occ of occurrences) {
+                    if (!occ.used) {
+                        const dist = levenshtein(lowerOrigWord, occ.word.toLowerCase());
+                        if (dist < minDistance && (dist / Math.min(lowerOrigWord.length, occ.word.length) < 0.6)) {
+                            minDistance = dist;
+                            bestMatch = occ;
+                        }
                     }
                 }
-                return escapeHtml(part);
-            }).join('');
-            
-            originalBTag.innerHTML = highlightedHtml;
-        }
-    }
+            }
+            if (bestMatch) { bestMatch.used = true; matchedOriginalIndices.add(index); }
+        });
 
+        const missingWords = combinedOriginalWords.filter((_, index) => !matchedOriginalIndices.has(index));
+        const excessWords = [];
+        textareaWordMap.forEach(occurrences => occurrences.forEach(occ => { if (!occ.used) excessWords.push(occ.word); }));
+
+        // --- UI Update Logic ---
+        const brandWords = getWords(brandPathValue.toLowerCase());
+        const originalDisplayWords = getWords(originalValue);
+        
+        const missingFromBrand = missingWords.filter(w => brandWords.includes(w.toLowerCase()));
+        const missingFromOriginal = missingWords.filter(w => originalDisplayWords.map(wd => wd.toLowerCase()).includes(w.toLowerCase()));
+        
+        // 1. Highlight Brand Input
+        domCache.woflowBrandPathInput.style.backgroundColor = missingFromBrand.length > 0 ? '#d0ebff' : '';
+
+        // 2. Highlight Original Item Name
+        if (missingFromOriginal.length > 0) {
+            const highlightRegex = new RegExp(`\\b(${missingFromOriginal.map(regexEscape).join('|')})\\b`, 'gi');
+            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex, match => `<span style="background-color: #FFF3A3;">${match}</span>`);
+        } else {
+            originalBTag.innerHTML = escapeHtml(originalValue);
+        }
+        
+        // 3. Display Excess Words
+        let excessWordsDiv = document.getElementById('excess-words-display');
+        if (!excessWordsDiv) {
+            excessWordsDiv = document.createElement('div');
+            excessWordsDiv.id = 'excess-words-display';
+            excessWordsDiv.style.cssText = 'padding: 5px; margin-top: 5px; border: 1px solid #f5c6cb; border-radius: 4px; background-color: #f8d7da; color: #721c24; font-size: 12px;';
+            domCache.cleanedItemNameTextarea.parentNode.insertBefore(excessWordsDiv, domCache.cleanedItemNameTextarea.nextSibling);
+        }
+        excessWordsDiv.style.display = excessWords.length > 0 ? 'block' : 'none';
+        if (excessWords.length > 0) {
+            excessWordsDiv.innerHTML = `<strong>Excess Words:</strong> ${excessWords.map(escapeHtml).join(' ')}`;
+        }
+
+        // 4. Highlight Cleaned Textarea
+        domCache.cleanedItemNameTextarea.style.backgroundColor = (missingWords.length === 0 && excessWords.length === 0) ? 'rgba(212, 237, 218, 0.2)' : 'rgba(252, 242, 242, 0.3)';
+    }
 
     let isTextareaListenerAttached = false;
     function runAllComparisons() {
@@ -144,24 +205,16 @@
         runSmartComparison();
         if (!isTextareaListenerAttached && domCache.cleanedItemNameTextarea) {
             let debounceTimer;
-            const listener = () => {
-                 if (!isUpdatingComparison) {
-                    clearTimeout(debounceTimer);
-                    debounceTimer = setTimeout(runSmartComparison, 300);
-                }
-            };
+            const listener = () => { if (!isUpdatingComparison) { clearTimeout(debounceTimer); debounceTimer = setTimeout(runSmartComparison, 300); } };
             domCache.cleanedItemNameTextarea.addEventListener('input', listener, { passive: true });
-            domCache.woflowBrandPathInput?.addEventListener('input', listener, { passive: true }); // Also re-run on brand change
+            domCache.woflowBrandPathInput?.addEventListener('input', listener, { passive: true });
             isTextareaListenerAttached = true;
         }
     }
 
     let observerTimer;
     const mutationObserver = new MutationObserver(() => {
-        if (!isUpdatingComparison && isHighlightingEnabled) {
-            clearTimeout(observerTimer);
-            observerTimer = setTimeout(runAllComparisons, 300);
-        }
+        if (!isUpdatingComparison && isHighlightingEnabled) { clearTimeout(observerTimer); observerTimer = setTimeout(runAllComparisons, 300); }
     });
 
     async function processGoogleSheetData() {
@@ -170,8 +223,7 @@
             for (const prefix of MONITORED_DIV_PREFIXES) {
                 const targetDiv = findDivByTextPrefix(prefix);
                 if (targetDiv) {
-                    const text = normalizeText(targetDiv.textContent.replace(prefix, ""));
-                    divContentMap.set(prefix, text);
+                    divContentMap.set(prefix, normalizeText(targetDiv.textContent.replace(prefix, "")));
                 }
             }
             const sheetResponse = await fetch(SHEET_URL);
@@ -182,9 +234,7 @@
                 if (!keywords || keywords.length === 0) continue;
                 for (const text of divContentMap.values()) {
                     for (const keyword of keywords) {
-                        if (text.includes(keyword)) {
-                            return row;
-                        }
+                        if (text.includes(keyword)) return row;
                     }
                 }
             }
@@ -205,8 +255,7 @@
         inputElement.value = valueToSelect;
         inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
         await delay(FAST_DELAY_MS);
-        const targetOption = [...document.querySelectorAll(SELECTORS.dropdownOption)]
-            .find(option => normalizeText(option.textContent) === normalizeText(valueToSelect));
+        const targetOption = [...document.querySelectorAll(SELECTORS.dropdownOption)].find(option => normalizeText(option.textContent) === normalizeText(valueToSelect));
         if (targetOption) {
             targetOption.click();
         } else {
@@ -214,36 +263,6 @@
             if (clearButton) clearButton.click();
         }
         await delay(INTERACTION_DELAY_MS);
-    }
-
-    async function runSearchAutomation(cleanedItemName) {
-        if (!domCache.searchBoxInput || !cleanedItemName) return;
-        const words = cleanedItemName.split(/\s+/).filter(Boolean);
-        if (words.length === 0) return;
-        domCache.searchBoxInput.focus();
-        domCache.searchBoxInput.click();
-        await delay(FAST_DELAY_MS);
-        let potentialSearchTerms = [];
-        if (words.length >= 2) potentialSearchTerms.push(words.slice(0, 2).join(' '));
-        potentialSearchTerms.push(words[0]);
-        for (const searchTerm of potentialSearchTerms) {
-            updateTextarea(domCache.searchBoxInput, searchTerm);
-            domCache.searchBoxInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true, passive: true }));
-            await delay(SEARCH_DELAY_MS);
-            const currentResults = document.querySelectorAll(SELECTORS.searchResults);
-            if (currentResults.length > 0) {
-                let bestMatchElement = null;
-                const targetTextNormalized = normalizeText(cleanedItemName);
-                for (const result of currentResults) {
-                    const resultTextNormalized = normalizeText(result.textContent);
-                    if (resultTextNormalized === targetTextNormalized) {
-                        result.click();
-                        return;
-                    }
-                }
-                return;
-            }
-        }
     }
 
     // --- Main Execution Flow ---
@@ -255,18 +274,13 @@
 
     runAllComparisons();
     const matchedSheetRow = await processGoogleSheetData();
-    if (!matchedSheetRow) {
-        return;
-    }
+    if (!matchedSheetRow) return;
+
     const dropdownConfigurations = [
-        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() },
-        { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
-        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() },
-        { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
-        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() },
-        { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" },
-        { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
+        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
+        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
+        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
+        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
     for (const { id, value } of dropdownConfigurations) {
@@ -274,8 +288,5 @@
     }
     if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
         updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
-    }
-    if (domCache.cleanedItemNameTextarea) {
-        await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
     }
 })();
