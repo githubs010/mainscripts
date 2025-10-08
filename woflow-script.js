@@ -45,7 +45,7 @@
         "itemName :", "Mx Provided WI Flag :", "WI Type :", "L1 Name :", "Woflow Notes :", "Exclude :", "Invalid Reason :",
         "upc :", "itemMerchantSuppliedId :"
     ];
-    const LEVENSHTEIN_TYPO_THRESHOLD = 4; // Increased for more lenient typo matching
+    const LEVENSHTEIN_TYPO_THRESHOLD = 5;
     const FAST_DELAY_MS = 50;
     const INTERACTION_DELAY_MS = 100;
     const SEARCH_DELAY_MS = 400;
@@ -154,86 +154,159 @@
         }
         return suggestions;
     }
-
+    
+    // --- IMPROVEMENT: Compares 'brand_path' + 'Original Item Name' against 'Cleaned Item Name' ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
-
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
-        const brandPathInput = domCache.woflowBrandPathInput;
-
-        if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea || !brandPathInput) return;
-
+        // --- MODIFICATION START ---
+        if (!originalItemNameDiv || !domCache.cleanedItemNameTextarea || !domCache.woflowBrandPathInput) return;
         const originalBTag = originalItemNameDiv.querySelector("b");
         if (!originalBTag) return;
-
+        
+        // Combine brand_path and original item name for a full comparison
+        const brandPathValue = domCache.woflowBrandPathInput.value.trim();
         const originalValue = originalBTag.textContent.trim();
+        const combinedOriginal = (brandPathValue + " " + originalValue).trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
-        const brandPathValue = brandPathInput.value.trim();
+        // --- MODIFICATION END ---
 
-        // 1. High-accuracy 100% comparison for both Original Item Name and Brand Path
-        const isExactOriginalMatch = normalizeText(originalValue) === normalizeText(textareaValue);
-        const isExactBrandMatch = normalizeText(brandPathValue) === normalizeText(textareaValue);
-
-        if (isExactOriginalMatch || isExactBrandMatch) {
-            domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)'; // Green for match
-            originalBTag.innerHTML = escapeHtml(originalValue); // Clear previous highlights
-            return;
-        }
-
-        // 2. Fallback to sorted "bag of words" comparison for reordered text
         const getSortedNormalizedWords = (str) => normalizeText(str).split(/\s+/).filter(Boolean).sort().join(' ');
-        if (getSortedNormalizedWords(originalValue) === getSortedNormalizedWords(textareaValue)) {
+        if (getSortedNormalizedWords(combinedOriginal) === getSortedNormalizedWords(textareaValue)) {
             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
-            originalBTag.innerHTML = escapeHtml(originalValue);
+            originalBTag.innerHTML = escapeHtml(originalValue); // Keep original display
+            let excessWordsDiv = document.getElementById('excess-words-display');
+            if (excessWordsDiv) excessWordsDiv.style.display = 'none';
             return;
         }
         
-        // 3. If no match, proceed with the detailed Levenshtein comparison for typos and word differences
         domCache.cleanedItemNameTextarea.style.backgroundColor = "rgba(252, 242, 242, 0.3)";
-        const originalWords = originalValue.split(/\s+/).filter(Boolean);
+        
+        let excessWordsDiv = document.getElementById('excess-words-display');
+        if (!excessWordsDiv) {
+            excessWordsDiv = document.createElement('div');
+            excessWordsDiv.id = 'excess-words-display';
+            excessWordsDiv.style.padding = '5px';
+            excessWordsDiv.style.marginTop = '5px';
+            excessWordsDiv.style.border = '1px solid #f5c6cb';
+            excessWordsDiv.style.borderRadius = '4px';
+            excessWordsDiv.style.backgroundColor = '#f8d7da';
+            excessWordsDiv.style.color = '#721c24';
+            excessWordsDiv.style.fontSize = '12px';
+            domCache.cleanedItemNameTextarea.parentNode.insertBefore(excessWordsDiv, domCache.cleanedItemNameTextarea.nextSibling);
+        }
+        excessWordsDiv.style.display = 'none';
+
+        // --- MODIFICATION START ---
+        // Use the combined string for word analysis
+        const originalWords = combinedOriginal.split(/\s+/).filter(Boolean);
         const textareaWords = textareaValue.split(/\s+/).filter(Boolean);
-        const textareaWordMap = new Map(textareaWords.map(w => [w.toLowerCase(), { word: w, used: false }]));
-        const diffSuggestions = [];
-        originalWords.forEach(origWord => {
-            const lowerOrigWord = origWord.toLowerCase();
-            if (textareaWordMap.has(lowerOrigWord) && !textareaWordMap.get(lowerOrigWord).used) {
-                textareaWordMap.get(lowerOrigWord).used = true;
-                return;
+        // --- MODIFICATION END ---
+        
+        const textareaWordMap = new Map();
+        textareaWords.forEach(word => {
+            const lowerWord = word.toLowerCase();
+            if (!textareaWordMap.has(lowerWord)) {
+                textareaWordMap.set(lowerWord, []);
             }
+            textareaWordMap.get(lowerWord).push({ word: word, used: false });
+        });
+
+        const matchedOriginalIndices = new Set();
+
+        originalWords.forEach((origWord, index) => {
+            const lowerOrigWord = origWord.toLowerCase();
+            const occurrences = textareaWordMap.get(lowerOrigWord);
+            if (occurrences) {
+                const unusedOccurrence = occurrences.find(occ => !occ.used);
+                if (unusedOccurrence) {
+                    unusedOccurrence.used = true;
+                    matchedOriginalIndices.add(index);
+                }
+            }
+        });
+
+        originalWords.forEach((origWord, index) => {
+            if (matchedOriginalIndices.has(index)) return;
+
+            const lowerOrigWord = origWord.toLowerCase();
             let bestMatch = null;
             let minDistance = LEVENSHTEIN_TYPO_THRESHOLD;
-            for (const [lowerTextWord, data] of textareaWordMap.entries()) {
-                if (!data.used) {
-                    const distance = levenshtein(lowerOrigWord, lowerTextWord);
-                    const shorterLength = Math.min(lowerOrigWord.length, lowerTextWord.length);
-                    const relativeDistance = shorterLength > 0 ? distance / shorterLength : (distance === 0 ? 0 : Infinity);
-                    if (distance <= minDistance && relativeDistance < 0.5) {
-                        minDistance = distance;
-                        bestMatch = data;
+
+            for (const [, occurrences] of textareaWordMap.entries()) {
+                for (const occurrence of occurrences) {
+                    if (!occurrence.used) {
+                        const distance = levenshtein(lowerOrigWord, occurrence.word.toLowerCase());
+                        if (distance < minDistance) {
+                             const shorterLength = Math.min(lowerOrigWord.length, occurrence.word.length);
+                             const relativeDistance = shorterLength > 0 ? distance / shorterLength : Infinity;
+                            if (relativeDistance < 0.6) {
+                                minDistance = distance;
+                                bestMatch = occurrence;
+                            }
+                        }
                     }
                 }
             }
+            
             if (bestMatch) {
                 bestMatch.used = true;
-                diffSuggestions.push({ type: 'fix', from: bestMatch.word, to: origWord });
-            } else {
-                diffSuggestions.push({ type: 'add', word: origWord });
+                matchedOriginalIndices.add(index);
             }
         });
-        textareaWordMap.forEach((data) => {
-            if (!data.used) diffSuggestions.push({ type: 'remove', word: data.word });
-        });
-        const missingWords = diffSuggestions.filter(s => s.type === 'add').map(s => s.word);
-        const uniqueMissingWords = [...new Set(missingWords)];
-        if (uniqueMissingWords.length > 0) {
-            const highlightRegex = new RegExp(`\\b(${uniqueMissingWords.map(regexEscape).join('|')})\\b`, 'gi');
-            originalBTag.innerHTML = escapeHtml(originalValue).replace(highlightRegex,
-                (match) => `<span style="background-color: #FFF3A3; border-radius: 2px;">${match}</span>`
-            );
+
+        const missingWords = originalWords.filter((_, index) => !matchedOriginalIndices.has(index));
+        const excessWords = [];
+        for (const occurrences of textareaWordMap.values()) {
+            occurrences.forEach(occ => {
+                if (!occ.used) {
+                    excessWords.push(occ.word);
+                }
+            });
+        }
+
+        // --- UPDATE HIGHLIGHTING ---
+        // Highlight missing words from the combined string in the original item name field for visibility
+        if (missingWords.length > 0) {
+            const uniqueMissingWords = [...new Set(missingWords)];
+            const brandWords = brandPathValue.split(/\s+/).filter(Boolean);
+            const originalItemWords = originalValue.split(/\s+/).filter(Boolean);
+            
+            // Highlight brand words if they are missing
+            const brandHighlightHtml = brandWords.map(word => {
+                if (uniqueMissingWords.includes(word)) {
+                    return `<span style="background-color: #FFDDC1; border-radius: 2px;">${escapeHtml(word)}</span>`;
+                }
+                return escapeHtml(word);
+            }).join(' ');
+
+            // Highlight original item name words if they are missing
+            const itemHighlightHtml = originalItemWords.map(word => {
+                 if (uniqueMissingWords.includes(word)) {
+                    return `<span style="background-color: #FFF3A3; border-radius: 2px;">${escapeHtml(word)}</span>`;
+                }
+                return escapeHtml(word);
+            }).join(' ');
+
+            // To avoid disrupting the UI, we only modify the Original Item Name's B-tag
+            originalBTag.innerHTML = itemHighlightHtml;
+            // Note: We are not displaying the missing brand words in the UI to prevent layout shifts. They are still part of the logic.
+
         } else {
             originalBTag.innerHTML = escapeHtml(originalValue);
         }
+
+        if (excessWords.length > 0) {
+            excessWordsDiv.innerHTML = `<strong>Excess Words:</strong> ${excessWords.map(escapeHtml).join(' ')}`;
+            excessWordsDiv.style.display = 'block';
+        }
+
+        if (missingWords.length === 0 && excessWords.length === 0) {
+             domCache.cleanedItemNameTextarea.style.backgroundColor = 'rgba(212, 237, 218, 0.2)';
+             if (excessWordsDiv) excessWordsDiv.style.display = 'none';
+        }
     }
+
 
     let isTextareaListenerAttached = false;
     function runAllComparisons() {
@@ -241,12 +314,14 @@
         runSmartComparison();
         if (!isTextareaListenerAttached && domCache.cleanedItemNameTextarea) {
             let debounceTimer;
-            domCache.cleanedItemNameTextarea.addEventListener('input', () => {
-                if (!isUpdatingComparison) {
+            const listener = () => {
+                 if (!isUpdatingComparison) {
                     clearTimeout(debounceTimer);
                     debounceTimer = setTimeout(runSmartComparison, 300);
                 }
-            }, { passive: true });
+            };
+            domCache.cleanedItemNameTextarea.addEventListener('input', listener, { passive: true });
+            domCache.woflowBrandPathInput?.addEventListener('input', listener, { passive: true }); // Also re-run on brand change
             isTextareaListenerAttached = true;
         }
     }
@@ -285,7 +360,6 @@
             }
             return null;
         } catch (error) {
-            // Provide better feedback to the user
             alert('❌ Could not connect to the Google Sheet. Please check your connection and try again.');
             console.error('Google Sheet fetch error:', error);
             return null;
