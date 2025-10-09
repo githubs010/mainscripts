@@ -33,7 +33,11 @@
     // --- OPTIMIZATION: Constants ---
     const TYPO_CONFIG = {
         libURL: 'https://cdn.jsdelivr.net/npm/typo-js@1.2.1/typo.js',
-        dictionaries: [{ name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' }],
+        // --- UPDATED: Added en_GB dictionary. You can add more dictionaries here. ---
+        dictionaries: [
+            { name: 'en_US', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-us@2.2.0/index.dic' },
+            { name: 'en_GB', affURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-gb@2.2.0/index.aff', dicURL: 'https://cdn.jsdelivr.net/npm/dictionary-en-gb@2.2.0/index.dic' }
+        ],
         ignoreLength: 3
     };
     const MONITORED_DIV_PREFIXES = [
@@ -129,6 +133,7 @@
         }
     }
 
+    // --- UPDATED: This function is now used to check for spelling mistakes ---
     function getSpellingSuggestions(words) {
         if (dictionaries.length === 0) return [];
         const suggestions = [];
@@ -138,7 +143,10 @@
             const lowerCleanWord = cleanWord.toLowerCase();
             if (checkedWords.has(lowerCleanWord) || cleanWord.length <= TYPO_CONFIG.ignoreLength || /\d/.test(cleanWord) || cleanWord.toUpperCase() === cleanWord) continue;
             checkedWords.add(lowerCleanWord);
+            
+            // Check against all loaded dictionaries
             if (!dictionaries.some(dict => dict.check(cleanWord))) {
+                // Get suggestions from the primary dictionary
                 const corrections = dictionaries[0].suggest(cleanWord);
                 if (corrections && corrections.length > 0) {
                     suggestions.push({ type: 'spell', from: word, to: corrections[0] });
@@ -160,6 +168,23 @@
         const brandPathValue = domCache.woflowBrandPathInput.value.trim();
         const originalValue = originalBTag.textContent.trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
+
+        // --- NEW: Active Spelling Check ---
+        const spellingSuggestions = getSpellingSuggestions(textareaValue.split(/\s+/));
+        let spellingDiv = document.getElementById('spelling-suggestions-display');
+        if (!spellingDiv) {
+            spellingDiv = document.createElement('div');
+            spellingDiv.id = 'spelling-suggestions-display';
+            spellingDiv.style.cssText = 'padding: 5px; margin-top: 5px; border: 1px solid #b8daff; border-radius: 4px; background-color: #cfe2ff; color: #084298; font-size: 12px;';
+            domCache.cleanedItemNameTextarea.parentNode.insertBefore(spellingDiv, domCache.cleanedItemNameTextarea.nextSibling);
+        }
+        if (spellingSuggestions.length > 0) {
+            spellingDiv.innerHTML = `<strong>Spelling Suggestions:</strong> ${spellingSuggestions.map(s => `<em>${escapeHtml(s.from)}</em> &rarr; <strong>${escapeHtml(s.to)}</strong>`).join(', ')}`;
+            spellingDiv.style.display = 'block';
+        } else {
+            spellingDiv.style.display = 'none';
+        }
+        // --- END: NEW Spelling Check ---
 
         // --- Word Matching Logic (Levenshtein + Exact) ---
         const getWords = (str) => str.split(/\s+/).filter(Boolean);
@@ -210,43 +235,35 @@
         const brandWords = getWords(brandPathValue.toLowerCase());
         const originalDisplayWords = getWords(originalValue);
         
-        // --- NEW HIGHLIGHTING LOGIC ---
+        // Highlighting Logic
         const newHtml = originalDisplayWords.map(word => {
             const lowerWord = word.toLowerCase();
             const isMissing = missingWords.map(w => w.toLowerCase()).includes(lowerWord);
             const isBrandWord = brandWords.includes(lowerWord);
 
             if (isMissing) {
-                if (isBrandWord) {
-                    // It's a missing word that is part of the brand. Highlight light blue.
-                    return `<span style="background-color: #d0ebff;">${escapeHtml(word)}</span>`;
-                } else {
-                    // It's a missing word from the original name (but not brand). Highlight yellow.
-                    return `<span style="background-color: #FFF3A3;">${escapeHtml(word)}</span>`;
-                }
+                return isBrandWord ? `<span style="background-color: #d0ebff;">${escapeHtml(word)}</span>` : `<span style="background-color: #FFF3A3;">${escapeHtml(word)}</span>`;
             }
-            return escapeHtml(word); // Not missing, no highlight.
+            return escapeHtml(word);
         }).join(' ');
 
         originalBTag.innerHTML = newHtml;
-        domCache.woflowBrandPathInput.style.backgroundColor = ''; // Ensure brand input is not highlighted
+        domCache.woflowBrandPathInput.style.backgroundColor = '';
         
-        // --- End of New Highlighting Logic ---
-        
-        // 3. Display Excess Words
+        // Display Excess Words
         let excessWordsDiv = document.getElementById('excess-words-display');
         if (!excessWordsDiv) {
             excessWordsDiv = document.createElement('div');
             excessWordsDiv.id = 'excess-words-display';
             excessWordsDiv.style.cssText = 'padding: 5px; margin-top: 5px; border: 1px solid #f5c6cb; border-radius: 4px; background-color: #f8d7da; color: #721c24; font-size: 12px;';
-            domCache.cleanedItemNameTextarea.parentNode.insertBefore(excessWordsDiv, domCache.cleanedItemNameTextarea.nextSibling);
+            spellingDiv.parentNode.insertBefore(excessWordsDiv, spellingDiv.nextSibling);
         }
         excessWordsDiv.style.display = excessWords.length > 0 ? 'block' : 'none';
         if (excessWords.length > 0) {
             excessWordsDiv.innerHTML = `<strong>Excess Words:</strong> ${excessWords.map(escapeHtml).join(' ')}`;
         }
 
-        // 4. Highlight Cleaned Textarea
+        // Highlight Cleaned Textarea
         domCache.cleanedItemNameTextarea.style.backgroundColor = (missingWords.length === 0 && excessWords.length === 0) ? 'rgba(212, 237, 218, 0.2)' : 'rgba(252, 242, 242, 0.3)';
     }
 
@@ -316,7 +333,7 @@
         await delay(INTERACTION_DELAY_MS);
     }
     
-    // --- AUTO-SEARCH FUNCTION (RESTORED) ---
+    // --- AUTO-SEARCH FUNCTION ---
     async function runSearchAutomation(cleanedItemName) {
         if (!domCache.searchBoxInput || !cleanedItemName) return;
         const words = cleanedItemName.split(/\s+/).filter(Boolean);
@@ -382,7 +399,7 @@
     if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
         updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
     }
-    // --- RUN AUTO-SEARCH (RESTORED) ---
+    
     if (domCache.cleanedItemNameTextarea) {
         await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
     }
