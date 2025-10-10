@@ -302,11 +302,29 @@
     }
 
     async function fillDropdown(comboboxId, valueToSelect) {
-        if (!valueToSelect) return;
+        // If valueToSelect is explicitly an empty string, we want to clear the dropdown.
+        // Otherwise, if it's null/undefined, we just return.
+        if (valueToSelect === null || valueToSelect === undefined) return;
+
         const inputElement = document.querySelector(`input[aria-labelledby="${comboboxId}"]`);
         if (!inputElement) return;
+
         inputElement.focus();
         inputElement.click();
+        await delay(FAST_DELAY_MS); // Give UI time to react
+
+        if (valueToSelect === '') {
+            // Clear the dropdown
+            const clearButton = document.querySelector(`#${comboboxId} + .vs__actions .vs__clear`);
+            if (clearButton) {
+                clearButton.click();
+                inputElement.value = ''; // Ensure underlying input is cleared
+                inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
+                await delay(INTERACTION_DELAY_MS);
+                return;
+            }
+        }
+        
         inputElement.value = valueToSelect;
         inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
         await delay(FAST_DELAY_MS);
@@ -314,6 +332,7 @@
         if (targetOption) {
             targetOption.click();
         } else {
+            // If option not found, try to clear it to avoid partial text input if a previous value was there.
             const clearButton = document.querySelector(`#${comboboxId} + .vs__actions .vs__clear`);
             if (clearButton) clearButton.click();
         }
@@ -363,6 +382,7 @@
     // --- Helper for UOM normalization ---
     function normalizeUOM(uom) {
         const lowerUom = uom.toLowerCase();
+        // Convert 'pack' and 'pk' to 'ct' only when *displaying* in the cleaned size string for multiple pairs
         if (lowerUom === 'fl oz' || lowerUom === 'floz') return 'fl oz';
         if (lowerUom === 'l') return 'L';
         if (lowerUom === 'g') return 'G';
@@ -370,11 +390,18 @@
         if (lowerUom === 'oz') return 'oz';
         if (lowerUom === 'kg') return 'kg';
         if (lowerUom === 'lb') return 'lb';
-        if (lowerUom === 'pack' || lowerUom === 'pk') return 'pack';
+        if (lowerUom === 'pack' || lowerUom === 'pk') return 'pack'; // Keep 'pack' for internal matching
         if (lowerUom === 'each' || lowerUom === 'ea') return 'each';
         if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
-        return lowerUom; // Return as is if not a special case
+        return lowerUom;
     }
+
+    function formatUOMForDisplay(uom) {
+        const lowerUom = uom.toLowerCase();
+        if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct'; // Convert to 'ct' for display in cleaned size
+        return lowerUom;
+    }
+
 
     // --- NEW FEATURE: Auto-fill Size and UOM from Original Item Name ---
     async function autoFillSizeAndUOM() {
@@ -397,29 +424,54 @@
         while ((match = extendedRegex.exec(originalItemNameText)) !== null) {
             matches.push({
                 size: match[1],
-                uom: normalizeUOM(match[2])
+                uom: normalizeUOM(match[2]) // Normalize for consistent internal representation
             });
         }
 
         if (matches.length > 0) {
-            // Only fill if the fields are empty
+            // Only fill Size field if it's currently empty
             if (sizeInput.value.trim() === '') {
                 if (matches.length > 1) {
                     // Scenario: Multiple pairs (e.g., "16OZ 4PK")
-                    const extendedSizeValue = matches.map(m => `${m.size} ${m.uom}`).join(' x ');
-                    updateTextarea(sizeInput, extendedSizeValue);
+                    // Convert 'pack'/'pk' to 'ct' for display in the combined string
+                    const extendedSizeValue = matches.map(m => `${m.size} ${formatUOMForDisplay(m.uom)}`).join(' x ');
+                    updateTextarea(sizeInput, extendedSizeValue); // "6 ct x 12 oz"
+                    // Do NOT set Woflow Cleaned UOM for multiple pairs
                 } else {
                     // Scenario: Single pair (e.g., "750ML")
                     // Only put the size number in the size input
-                    updateTextarea(sizeInput, matches[0].size);
+                    updateTextarea(sizeInput, matches[0].size); // "750"
+                    
+                    // Set Woflow Cleaned UOM for single pairs
+                    const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
+                    if (currentUOMValue === '' || currentUOMValue === 'Select an option' || currentUOMValue === 'UOM') {
+                        await fillDropdown("vs7__combobox", matches[0].uom); // "ml"
+                    }
                 }
                 await delay(INTERACTION_DELAY_MS);
+            } else if (matches.length === 1) {
+                // If sizeInput was NOT empty, but there's a single match, still check/fill UOM
+                const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
+                if (currentUOMValue === '' || currentUOMValue === 'Select an option' || currentUOMValue === 'UOM') {
+                    await fillDropdown("vs7__combobox", matches[0].uom); // "ml"
+                }
+            } else if (matches.length > 1) {
+                // If sizeInput was NOT empty, and there are multiple matches, ensure UOM is cleared if it was set
+                const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
+                if (currentUOMValue !== '' && currentUOMValue !== 'Select an option' && currentUOMValue !== 'UOM') {
+                    await fillDropdown("vs7__combobox", ''); // Clear UOM dropdown
+                }
             }
 
-            // Always attempt to fill the UOM dropdown with the UOM from the first match, if it's empty
+        } else {
+            // If no matches are found, ensure both fields are cleared/empty if they were previously auto-filled
+            if (sizeInput.value.trim() !== '') {
+                 updateTextarea(sizeInput, '');
+                 await delay(FAST_DELAY_MS);
+            }
             const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
-            if (currentUOMValue === '' || currentUOMValue === 'Select an option' || currentUOMValue === 'UOM') { // Added 'UOM' as a potential default empty state
-                await fillDropdown("vs7__combobox", matches[0].uom);
+            if (currentUOMValue !== '' && currentUOMValue !== 'Select an option' && currentUOMValue !== 'UOM') {
+                 await fillDropdown("vs7__combobox", ''); // Passing empty string to clear it
             }
         }
     }
@@ -447,13 +499,14 @@
         { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
         { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
         { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
-        // This `vs7__combobox` will be handled by autoFillSizeAndUOM primarily.
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, 
+        // vs7__combobox (Woflow Cleaned UOM) is handled specifically by autoFillSizeAndUOM now based on conditions
         { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
 
     for (const { id, value } of dropdownConfigurations) {
+        // Skip filling vs7__combobox here, as it's handled by autoFillSizeAndUOM's specific logic
+        if (id === "vs7__combobox") continue;
         await fillDropdown(id, value);
     }
     if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
