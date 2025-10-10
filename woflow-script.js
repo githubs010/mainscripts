@@ -54,8 +54,8 @@
         searchBox: 'input[name="search-box"]',
         searchResults: 'a.search-results',
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
-        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]', // Selector for Cleaned Size
-        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]' // Specific selector for Cleaned UOM dropdown
+        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]',
+        woflowCleanedUOM: 'input[aria-labelledby="vs9__combobox"]' // Corrected selector for Cleaned UOM dropdown
     };
 
     // --- Global State and Caching ---
@@ -388,18 +388,21 @@
         if (lowerUom === 'oz') return 'oz';
         if (lowerUom === 'kg') return 'kg';
         if (lowerUom === 'lb') return 'lb';
-        if (lowerUom === 'pack' || lowerUom === 'pk') return 'pack'; // Keep 'pack' for internal matching
-        if (lowerUom === 'each' || lowerUom === 'ea') return 'each';
+        if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct'; // Normalize 'pack'/'pk' to 'ct'
+        if (lowerUom === 'case') return 'case';
         if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
-        return lowerUom;
+        if (lowerUom === 'doz') return 'doz';
+        if (lowerUom === 'ea' || lowerUom === 'each') return 'each';
+        // Add other UOM normalizations as needed
+        return lowerUom; // Return as is if no specific normalization
     }
 
     function formatUOMForDisplay(uom) {
-        const lowerUom = uom.toLowerCase();
-        if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct'; // Convert to 'ct' for display in cleaned size
-        return lowerUom;
+        // This function formats UOM for display in the "Woflow Cleaned Size" field,
+        // specifically for multiple items (e.g., "6 ct x 12 oz").
+        // 'ct' is preferred for display for 'pack'/'pk' here as well.
+        return normalizeUOM(uom); 
     }
-
 
     // --- NEW FEATURE: Auto-fill Size and UOM from Original Item Name ---
     async function autoFillSizeAndUOM() {
@@ -410,7 +413,7 @@
         if (!originalItemNameText) return;
 
         const sizeInput = domCache.woflowCleanedSizeInput;
-        const uomInput = domCache.woflowCleanedUOMInput; // This is the input element, not the whole combobox
+        const uomInput = domCache.woflowCleanedUOMInput; // This is the input element of the UOM dropdown
 
         if (!sizeInput || !uomInput) return;
 
@@ -446,12 +449,12 @@
                 // If multiple matches, clear the UOM dropdown.
                 // Only clear if it actually has a value other than default/empty.
                 if (currentUOMDropdownValue !== '' && currentUOMDropdownValue !== 'Select an option' && currentUOMDropdownValue !== 'UOM') {
-                    await fillDropdown("vs7__combobox", ''); // Clear UOM dropdown
+                    await fillDropdown("vs9__combobox", ''); // Clear UOM dropdown, using "vs9__combobox"
                 }
             } else { // Single match
                 // Only fill UOM if it's currently empty or default
                 if (currentUOMDropdownValue === '' || currentUOMDropdownValue === 'Select an option' || currentUOMDropdownValue === 'UOM') {
-                    await fillDropdown("vs7__combobox", matches[0].uom); // "ml"
+                    await fillDropdown("vs9__combobox", matches[0].uom); // Fill with normalized UOM (e.g., "ml" or "ct")
                 }
             }
         } else {
@@ -461,7 +464,7 @@
                  await delay(FAST_DELAY_MS);
             }
             if (currentUOMDropdownValue !== '' && currentUOMDropdownValue !== 'Select an option' && currentUOMDropdownValue !== 'UOM') {
-                 await fillDropdown("vs7__combobox", ''); // Clear UOM dropdown
+                 await fillDropdown("vs9__combobox", ''); // Clear UOM dropdown
             }
         }
     }
@@ -471,7 +474,7 @@
     domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
     domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
     domCache.woflowCleanedSizeInput = document.querySelector(SELECTORS.woflowCleanedSize);
-    domCache.woflowCleanedUOMInput = document.querySelector(SELECTORS.woflowCleanedUOM);
+    domCache.woflowCleanedUOMInput = document.querySelector(SELECTORS.woflowCleanedUOM); // Updated to use vs9__combobox selector
 
     window.__autoFillObserver = mutationObserver;
     mutationObserver.observe(document.body, { childList: true, subtree: true });
@@ -485,21 +488,32 @@
 
     if (!matchedSheetRow) return;
 
-    // Build dropdown configurations, including vs7_combobox if the sheet has a value.
-    // autoFillSizeAndUOM would have already run and handled initial state.
-    // If the sheet provides a value, it should override the auto-fill.
+    // Build dropdown configurations. Note: vs7__combobox is now "WI Flag" based on the sheet.
+    // The previous vs7__combobox was likely the Woflow Cleaned UOM.
+    // This assumes the spreadsheet columns map as follows, and we're now mapping vs9 for UOM:
+    // vs1: Vertical Name
+    // vs2: ...
+    // vs3: ...
+    // vs4: ...
+    // vs5: ...
+    // vs6: ...
+    // vs7: WI Flag (based on "Yes" default)
+    // vs8: ...
+    // vs9: Woflow Cleaned UOM (handled by autoFillSizeAndUOM and potentially overridden by sheet's vs9 column)
+    // vs17: ...
+
     const dropdownConfigurations = [
-        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() },
+        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, 
         { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
-        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() },
+        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, 
         { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
-        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() },
+        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, 
         { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() }, // Let the sheet potentially override autoFillSizeAndUOM for UOM
+        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, // Assuming vs7 is "WI Flag" as per sheet example
         { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
+        { id: "vs9__combobox", value: matchedSheetRow?.vs9?.trim() }, // Include vs9 for UOM, allowing sheet to override auto-fill
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
-
     for (const { id, value } of dropdownConfigurations) {
         await fillDropdown(id, value);
     }
