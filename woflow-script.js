@@ -54,8 +54,8 @@
         searchBox: 'input[name="search-box"]',
         searchResults: 'a.search-results',
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
-        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]',
-        woflowCleanedUOM: 'input[aria-labelledby="vs9__combobox"]' // Corrected selector for Cleaned UOM dropdown
+        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]', // Selector for Cleaned Size
+        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]' // Specific selector for Cleaned UOM dropdown
     };
 
     // --- Global State and Caching ---
@@ -302,26 +302,9 @@
     }
 
     async function fillDropdown(comboboxId, valueToSelect) {
-        if (valueToSelect === null || valueToSelect === undefined) return;
-
+        if (!valueToSelect) return;
         const inputElement = document.querySelector(`input[aria-labelledby="${comboboxId}"]`);
         if (!inputElement) return;
-
-        // If valueToSelect is an empty string, we intend to clear the dropdown.
-        if (valueToSelect === '') {
-            inputElement.focus();
-            inputElement.click();
-            await delay(FAST_DELAY_MS);
-            const clearButton = document.querySelector(`#${comboboxId} + .vs__actions .vs__clear`);
-            if (clearButton) {
-                clearButton.click();
-                inputElement.value = ''; // Ensure underlying input is cleared
-                inputElement.dispatchEvent(new Event("input", { bubbles: true, passive: true }));
-                await delay(INTERACTION_DELAY_MS);
-                return;
-            }
-        }
-        
         inputElement.focus();
         inputElement.click();
         inputElement.value = valueToSelect;
@@ -331,7 +314,6 @@
         if (targetOption) {
             targetOption.click();
         } else {
-            // If option not found, try to clear it to avoid partial text input if a previous value was there.
             const clearButton = document.querySelector(`#${comboboxId} + .vs__actions .vs__clear`);
             if (clearButton) clearButton.click();
         }
@@ -388,20 +370,10 @@
         if (lowerUom === 'oz') return 'oz';
         if (lowerUom === 'kg') return 'kg';
         if (lowerUom === 'lb') return 'lb';
-        if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct'; // Normalize 'pack'/'pk' to 'ct'
-        if (lowerUom === 'case') return 'case';
+        if (lowerUom === 'pack' || lowerUom === 'pk') return 'pack';
+        if (lowerUom === 'each' || lowerUom === 'ea') return 'each';
         if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
-        if (lowerUom === 'doz') return 'doz';
-        if (lowerUom === 'ea' || lowerUom === 'each') return 'each';
-        // Add other UOM normalizations as needed
-        return lowerUom; // Return as is if no specific normalization
-    }
-
-    function formatUOMForDisplay(uom) {
-        // This function formats UOM for display in the "Woflow Cleaned Size" field,
-        // specifically for multiple items (e.g., "6 ct x 12 oz").
-        // 'ct' is preferred for display for 'pack'/'pk' here as well.
-        return normalizeUOM(uom); 
+        return lowerUom; // Return as is if not a special case
     }
 
     // --- NEW FEATURE: Auto-fill Size and UOM from Original Item Name ---
@@ -413,7 +385,7 @@
         if (!originalItemNameText) return;
 
         const sizeInput = domCache.woflowCleanedSizeInput;
-        const uomInput = domCache.woflowCleanedUOMInput; // This is the input element of the UOM dropdown
+        const uomInput = domCache.woflowCleanedUOMInput;
 
         if (!sizeInput || !uomInput) return;
 
@@ -425,46 +397,41 @@
         while ((match = extendedRegex.exec(originalItemNameText)) !== null) {
             matches.push({
                 size: match[1],
-                uom: normalizeUOM(match[2]) // Normalize for consistent internal representation
+                uom: normalizeUOM(match[2])
             });
         }
 
-        const currentSizeValue = sizeInput.value.trim();
-        const currentUOMDropdownValue = uomInput.value.trim(); // Get current displayed value of the UOM dropdown input
-
         if (matches.length > 0) {
-            // --- Logic for Woflow Cleaned Size ---
-            if (currentSizeValue === '') { // Only fill if the field is currently empty
+            // Only fill Size field if it's currently empty
+            if (sizeInput.value.trim() === '') {
                 if (matches.length > 1) {
-                    const extendedSizeValue = matches.map(m => `${m.size} ${formatUOMForDisplay(m.uom)}`).join(' x ');
-                    updateTextarea(sizeInput, extendedSizeValue); // "6 ct x 12 oz"
+                    // Scenario: Multiple pairs (e.g., "16OZ 4PK")
+                    const extendedSizeValue = matches.map(m => `${m.size} ${m.uom}`).join(' x ');
+                    updateTextarea(sizeInput, extendedSizeValue);
                 } else {
-                    updateTextarea(sizeInput, matches[0].size); // "750"
+                    // Scenario: Single pair (e.g., "750ML")
+                    // Only put the size number in the size input
+                    updateTextarea(sizeInput, matches[0].size);
                 }
                 await delay(INTERACTION_DELAY_MS);
             }
 
-            // --- Logic for Woflow Cleaned UOM ---
-            if (matches.length > 1) {
-                // If multiple matches, clear the UOM dropdown.
-                // Only clear if it actually has a value other than default/empty.
-                if (currentUOMDropdownValue !== '' && currentUOMDropdownValue !== 'Select an option' && currentUOMDropdownValue !== 'UOM') {
-                    await fillDropdown("vs9__combobox", ''); // Clear UOM dropdown, using "vs9__combobox"
-                }
-            } else { // Single match
-                // Only fill UOM if it's currently empty or default
-                if (currentUOMDropdownValue === '' || currentUOMDropdownValue === 'Select an option' || currentUOMDropdownValue === 'UOM') {
-                    await fillDropdown("vs9__combobox", matches[0].uom); // Fill with normalized UOM (e.g., "ml" or "ct")
-                }
+            // Always attempt to fill the UOM dropdown with the UOM from the first match, if it's empty
+            const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
+            if (currentUOMValue === '' || currentUOMValue === 'Select an option' || currentUOMValue === 'UOM') {
+                await fillDropdown("vs7__combobox", matches[0].uom);
             }
         } else {
-            // If no matches found, ensure both fields are cleared/empty if they were previously auto-filled
-            if (currentSizeValue !== '') {
+            // If no matches are found, ensure both fields are cleared/empty if they were previously auto-filled
+            // (This is an optional addition to ensure cleanliness if there's no match)
+            if (sizeInput.value.trim() !== '') {
                  updateTextarea(sizeInput, '');
                  await delay(FAST_DELAY_MS);
             }
-            if (currentUOMDropdownValue !== '' && currentUOMDropdownValue !== 'Select an option' && currentUOMDropdownValue !== 'UOM') {
-                 await fillDropdown("vs9__combobox", ''); // Clear UOM dropdown
+            const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
+            if (currentUOMValue !== '' && currentUOMValue !== 'Select an option' && currentUOMValue !== 'UOM') {
+                 // Attempt to clear the dropdown if it was potentially auto-filled previously and no matches are found now
+                 await fillDropdown("vs7__combobox", ''); // Passing empty string to clear it
             }
         }
     }
@@ -474,7 +441,7 @@
     domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
     domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
     domCache.woflowCleanedSizeInput = document.querySelector(SELECTORS.woflowCleanedSize);
-    domCache.woflowCleanedUOMInput = document.querySelector(SELECTORS.woflowCleanedUOM); // Updated to use vs9__combobox selector
+    domCache.woflowCleanedUOMInput = document.querySelector(SELECTORS.woflowCleanedUOM);
 
     window.__autoFillObserver = mutationObserver;
     mutationObserver.observe(document.body, { childList: true, subtree: true });
@@ -483,37 +450,21 @@
     runAllComparisons();
     const matchedSheetRow = await processGoogleSheetData();
 
-    // Call the new auto-fill function FIRST, so it can set/clear fields based on item name.
+    // Call the new auto-fill function BEFORE other dropdowns, as size/UOM might influence later steps
     await autoFillSizeAndUOM();
 
     if (!matchedSheetRow) return;
 
-    // Build dropdown configurations. Note: vs7__combobox is now "WI Flag" based on the sheet.
-    // The previous vs7__combobox was likely the Woflow Cleaned UOM.
-    // This assumes the spreadsheet columns map as follows, and we're now mapping vs9 for UOM:
-    // vs1: Vertical Name
-    // vs2: ...
-    // vs3: ...
-    // vs4: ...
-    // vs5: ...
-    // vs6: ...
-    // vs7: WI Flag (based on "Yes" default)
-    // vs8: ...
-    // vs9: Woflow Cleaned UOM (handled by autoFillSizeAndUOM and potentially overridden by sheet's vs9 column)
-    // vs17: ...
-
     const dropdownConfigurations = [
-        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, 
-        { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
-        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, 
-        { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
-        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, 
-        { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, // Assuming vs7 is "WI Flag" as per sheet example
+        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
+        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
+        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
+        // This `vs7__combobox` will be handled by autoFillSizeAndUOM primarily.
+        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, 
         { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
-        { id: "vs9__combobox", value: matchedSheetRow?.vs9?.trim() }, // Include vs9 for UOM, allowing sheet to override auto-fill
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
+
     for (const { id, value } of dropdownConfigurations) {
         await fillDropdown(id, value);
     }
