@@ -54,8 +54,8 @@
         searchBox: 'input[name="search-box"]',
         searchResults: 'a.search-results',
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
-        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]', // Added selector for Cleaned Size
-        woflowCleanedUOM: 'input[aria-labelledby="vs9__combobox"]' // Specific selector for Cleaned UOM dropdown
+        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]', // Selector for Cleaned Size
+        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]' // CORRECTED: Specific selector for Cleaned UOM dropdown
     };
 
     // --- Global State and Caching ---
@@ -369,7 +369,8 @@
         if (!originalItemNameText) return;
 
         const sizeInput = domCache.woflowCleanedSizeInput;
-        const uomInput = domCache.woflowCleanedUOMInput;
+        // CORRECTED: Use the UOM input from domCache which now points to vs7__combobox
+        const uomInput = domCache.woflowCleanedUOMInput; 
 
         if (!sizeInput || !uomInput) return;
 
@@ -400,11 +401,10 @@
                 await delay(INTERACTION_DELAY_MS);
             }
 
-            // The dropdown for UOM uses a specific input with aria-labelledby="vs9__combobox"
-            // We need to use the fillDropdown helper for this.
+            // The dropdown for UOM now uses vs7__combobox
             const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
             if (currentUOMValue === '' || currentUOMValue === 'Select an option') {
-                await fillDropdown("vs9__combobox", uom);
+                await fillDropdown("vs7__combobox", uom); // CORRECTED: Use "vs7__combobox"
             }
         }
     }
@@ -413,8 +413,9 @@
     domCache.cleanedItemNameTextarea = document.querySelector(SELECTORS.cleanedItemName);
     domCache.searchBoxInput = document.querySelector(SELECTORS.searchBox);
     domCache.woflowBrandPathInput = document.querySelector(SELECTORS.brandPath);
-    domCache.woflowCleanedSizeInput = document.querySelector(SELECTORS.woflowCleanedSize); // Cache new input
-    domCache.woflowCleanedUOMInput = document.querySelector(SELECTORS.woflowCleanedUOM); // Cache new input
+    domCache.woflowCleanedSizeInput = document.querySelector(SELECTORS.woflowCleanedSize);
+    // CORRECTED: Cache the UOM input using the correct selector
+    domCache.woflowCleanedUOMInput = document.querySelector(SELECTORS.woflowCleanedUOM);
 
     window.__autoFillObserver = mutationObserver;
     mutationObserver.observe(document.body, { childList: true, subtree: true });
@@ -432,9 +433,20 @@
         { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
         { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
         { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
+        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, // Note: This vs7 might be overwritten by autoFillSizeAndUOM if it targets the same UOM field.
+        { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
+
+    // IMPORTANT CONSIDERATION: If "vs7__combobox" is *also* being filled by the Google Sheet data,
+    // the order of operations matters.
+    // Currently, autoFillSizeAndUOM runs first, then the sheet data fills dropdowns.
+    // If the sheet data should *override* autoFillSizeAndUOM for vs7, then the autoFillSizeAndUOM call should be moved
+    // to *after* the dropdownConfigurations loop.
+    // For now, it remains before, meaning manual extraction will attempt to fill,
+    // and if the sheet has a value for vs7, it might overwrite it.
+    // Please confirm the desired precedence for "vs7__combobox" if it's dual-purpose.
+
     for (const { id, value } of dropdownConfigurations) {
         await fillDropdown(id, value);
     }
