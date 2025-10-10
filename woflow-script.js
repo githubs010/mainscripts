@@ -55,7 +55,7 @@
         searchResults: 'a.search-results',
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
         woflowCleanedSize: 'input[name="Woflow Cleaned Size"]', // Selector for Cleaned Size
-        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]' // CORRECTED: Specific selector for Cleaned UOM dropdown
+        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]' // Specific selector for Cleaned UOM dropdown
     };
 
     // --- Global State and Caching ---
@@ -66,8 +66,8 @@
         cleanedItemNameTextarea: null,
         searchBoxInput: null,
         woflowBrandPathInput: null,
-        woflowCleanedSizeInput: null, // Added to cache
-        woflowCleanedUOMInput: null, // Added to cache
+        woflowCleanedSizeInput: null,
+        woflowCleanedUOMInput: null,
         allDivs: [...document.querySelectorAll("div")]
     };
 
@@ -372,7 +372,7 @@
         if (lowerUom === 'lb') return 'lb';
         if (lowerUom === 'pack' || lowerUom === 'pk') return 'pack';
         if (lowerUom === 'each' || lowerUom === 'ea') return 'each';
-        if (lowerUom === 'ct' || lowerUom === 'count') return 'ct'; // Added 'ct' normalization
+        if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
         return lowerUom; // Return as is if not a special case
     }
 
@@ -390,7 +390,6 @@
         if (!sizeInput || !uomInput) return;
 
         // Expanded regex to capture multiple size/unit patterns globally
-        // It now also looks for "ct" for count
         const extendedRegex = /(\d+\.?\d*)\s*(fl\s*oz|oz|ml|l|gal|pt|qt|kg|g|lb|pack|pk|case|ct|count|doz|ea|each|sq\s*ft|btl|box|can|roll|pr|pair|ctn|bag|servings|bunch|by\s*pound)\b/ig;
         
         let matches = [];
@@ -398,31 +397,29 @@
         while ((match = extendedRegex.exec(originalItemNameText)) !== null) {
             matches.push({
                 size: match[1],
-                uom: normalizeUOM(match[2]) // Use the new normalization helper
+                uom: normalizeUOM(match[2])
             });
         }
 
         if (matches.length > 0) {
-            // Logic for "Insert Woflow Cleaned Size" field
+            // Only fill if the fields are empty
             if (sizeInput.value.trim() === '') {
-                let extendedSizeValue = '';
                 if (matches.length > 1) {
-                    extendedSizeValue = matches.map(m => `${m.size} ${m.uom}`).join(' x ');
+                    // Scenario: Multiple pairs (e.g., "16OZ 4PK")
+                    const extendedSizeValue = matches.map(m => `${m.size} ${m.uom}`).join(' x ');
+                    updateTextarea(sizeInput, extendedSizeValue);
                 } else {
-                    extendedSizeValue = `${matches[0].size} ${matches[0].uom}`;
+                    // Scenario: Single pair (e.g., "750ML")
+                    // Only put the size number in the size input
+                    updateTextarea(sizeInput, matches[0].size);
                 }
-                updateTextarea(sizeInput, extendedSizeValue);
                 await delay(INTERACTION_DELAY_MS);
             }
 
-            // Logic for "Insert Woflow Cleaned UOM" dropdown
-            // We'll try to set the UOM dropdown based on the FIRST unit found,
-            // but only if it's not already filled from the sheet or by user.
+            // Always attempt to fill the UOM dropdown with the UOM from the first match, if it's empty
             const currentUOMValue = domCache.woflowCleanedUOMInput.value.trim();
-            if (currentUOMValue === '' || currentUOMValue === 'Select an option') {
-                if (matches.length > 0) {
-                    await fillDropdown("vs7__combobox", matches[0].uom); // Use the UOM from the first match
-                }
+            if (currentUOMValue === '' || currentUOMValue === 'Select an option' || currentUOMValue === 'UOM') { // Added 'UOM' as a potential default empty state
+                await fillDropdown("vs7__combobox", matches[0].uom);
             }
         }
     }
@@ -451,21 +448,11 @@
         { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
         { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
         // This `vs7__combobox` will be handled by autoFillSizeAndUOM primarily.
-        // If sheet data should overwrite auto-extracted UOM, you might want to adjust the `fillDropdown` condition in autoFillSizeAndUOM
-        // or ensure this row's value is correctly picked by the fillDropdown function, which already checks `valueToSelect`.
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, // Assuming "Yes" is a default or placeholder
+        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() || "Yes" }, 
         { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
         { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
     ];
 
-    // The autoFillSizeAndUOM runs *before* this loop.
-    // If matchedSheetRow.vs7 contains a valid UOM, and it was empty before,
-    // autoFillSizeAndUOM might have already filled it.
-    // fillDropdown has a check: `if (!valueToSelect) return;`.
-    // The current logic of fillDropdown will attempt to set the value.
-    // If the UOM was auto-filled to 'fl oz' by `autoFillSizeAndUOM` and `matchedSheetRow?.vs7?.trim()` is also 'fl oz', it will effectively re-select the same.
-    // If `matchedSheetRow?.vs7?.trim()` is *different*, it will overwrite the auto-filled value.
-    // This is generally a safe default.
     for (const { id, value } of dropdownConfigurations) {
         await fillDropdown(id, value);
     }
