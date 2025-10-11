@@ -43,6 +43,29 @@
         "itemName :", "Mx Provided WI Flag :", "WI Type :", "L1 Name :", "Woflow Notes :", "Exclude :", "Invalid Reason :",
         "upc :", "itemMerchantSuppliedId :"
     ];
+
+    // --- NEW: Comprehensive list of alcohol-related keywords ---
+    const ALCOHOL_KEYWORDS = [
+        'wine', 'tequila', 'whiskey', 'alcohol', 'vodka', 'rum', 'brandy', 'beer', 'seltzers & more', 'liqueur',
+        'alcoholic', 'drink', 'booze', 'spirits', 'ipa', 'lager', 'pilsner', 'stout', 'porter', 'seltzers',
+        'wheat', 'blonde', 'amber', 'craft', 'draft', 'light', 'barleywine', 'belgian', 'brown', 'cream', 'fruit',
+        'hybrid', 'red', 'scotch', 'sour', 'tripel', 'imperial', 'double', 'redwine', 'whitewine', 'sparkling',
+        'rose', 'dessert', 'dry', 'sweet', 'pinot', 'cabernet', 'merlot', 'zinfandel', 'syrah', 'malbec',
+        'sangiovese', 'grigio', 'sauvignon', 'chardonnay', 'riesling', 'prosecco', 'champagne', 'cava', 'table',
+        'fortified', 'port', 'sherry', 'tawny', 'vintage', 'harvest', 'liquo', 'whiskey', 'bourbon', 'whisky',
+        'liquor', 'irish', 'japanese', 'rye', 'tennessee', 'corn', 'malt', 'canadian', 'american', 'blended',
+        'oak', 'peated', 'cask', 'barrel', 'aged', 'smoky', 'plain', 'flavored', 'premium', 'triple', 'potato',
+        'organic', 'glutenfree', 'infused', 'lemon', 'pepper', 'vanilla', 'citrus', 'russian', 'polish',
+        'unflavored', 'tequila', 'gold', 'blanco', 'silver', 'reposado', 'anejo', 'extra', 'ultra', 'joven',
+        'mixto', 'agave', 'blue', 'white', 'cristalino', 'clear', 'oakaged', 'rum', 'dark', 'spiced', 'coconut',
+        'black', 'overproof', 'jamaican', 'barbados', 'sugarcane', 'molasses', 'punch', 'liqueur', 'gin', 'dry',
+        'london', 'botanical', 'pink', 'herbal', 'juniper', 'navy', 'sloe', 'aromatic', 'brandy', 'cognac',
+        'armagnac', 'apple', 'grape', 'cherry', 'pear', 'apricot', 'vs', 'vsop', 'xo', 'french', 'rtd', 'seltzer',
+        'spiked', 'lemonade', 'cooler', 'iced', 'canned', 'beverage', 'tonic', 'soda', 'club', 'cola', 'ginger',
+        'bitters', 'vermouth', 'cointreau', 'grenadine', 'simple', 'margarita', 'cocktail', 'bloody', 'kit',
+        'brewing', 'distilling', 'moonshine', 'fermentation', 'spirit'
+    ];
+
     const LEVENSHTEIN_TYPO_THRESHOLD = 5;
     const FAST_DELAY_MS = 50;
     const INTERACTION_DELAY_MS = 100;
@@ -54,8 +77,8 @@
         searchBox: 'input[name="search-box"]',
         searchResults: 'a.search-results',
         dropdownOption: '.vs__dropdown-option, .vs__dropdown-menu li',
-        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]', // Selector for Cleaned Size
-        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]' // Specific selector for Cleaned UOM dropdown
+        woflowCleanedSize: 'input[name="Woflow Cleaned Size"]',
+        woflowCleanedUOM: 'input[aria-labelledby="vs7__combobox"]'
     };
 
     // --- Global State and Caching ---
@@ -76,6 +99,13 @@
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const regexEscape = (str) => str.replace(/[-\/\^$*+?.()|[\]{}]/g, '\$&');
     const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "'");
+
+    // --- NEW: Helper function to check for alcohol keywords ---
+    function isAlcoholProduct(text) {
+        if (!text) return false;
+        const lowerText = text.toLowerCase();
+        return ALCOHOL_KEYWORDS.some(keyword => lowerText.includes(keyword));
+    }
 
     if (window.__autoFillObserver) {
         window.__autoFillObserver.disconnect();
@@ -133,26 +163,7 @@
         }
     }
 
-    function getSpellingSuggestions(words) {
-        if (dictionaries.length === 0) return [];
-        const suggestions = [];
-        const checkedWords = new Set();
-        for (const word of words) {
-            const cleanWord = word.replace(/['"(),.?]/g, '');
-            const lowerCleanWord = cleanWord.toLowerCase();
-            if (checkedWords.has(lowerCleanWord) || cleanWord.length <= TYPO_CONFIG.ignoreLength || /\d/.test(cleanWord) || cleanWord.toUpperCase() === cleanWord) continue;
-            checkedWords.add(lowerCleanWord);
-            if (!dictionaries.some(dict => dict.check(cleanWord))) {
-                const corrections = dictionaries[0].suggest(cleanWord);
-                if (corrections && corrections.length > 0) {
-                    suggestions.push({ type: 'spell', from: word, to: corrections[0] });
-                }
-            }
-        }
-        return suggestions;
-    }
-
-    // --- FINAL: Full comparison logic with differentiated highlighting ---
+    // --- Comparison and Highlighting Logic (Unchanged) ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
@@ -160,16 +171,12 @@
         const originalBTag = originalItemNameDiv.querySelector("b");
         if (!originalBTag) return;
 
-        // --- Get values ---
         const brandPathValue = domCache.woflowBrandPathInput.value.trim();
         const originalValue = originalBTag.textContent.trim();
         const textareaValue = domCache.cleanedItemNameTextarea.value.trim();
-
-        // --- Word Matching Logic (Levenshtein + Exact) ---
         const getWords = (str) => str.split(/\s+/).filter(Boolean);
         const combinedOriginalWords = getWords((brandPathValue + " " + originalValue).trim());
         const textareaWords = getWords(textareaValue);
-
         const textareaWordMap = new Map();
         textareaWords.forEach(word => {
             const lower = word.toLowerCase();
@@ -178,7 +185,6 @@
         });
 
         const matchedOriginalIndices = new Set();
-        // Pass 1: Exact matches
         combinedOriginalWords.forEach((origWord, index) => {
             const lowerOrigWord = origWord.toLowerCase();
             const occurrences = textareaWordMap.get(lowerOrigWord);
@@ -187,7 +193,6 @@
                 if (unused) { unused.used = true; matchedOriginalIndices.add(index); }
             }
         });
-        // Pass 2: Levenshtein typo matches
         combinedOriginalWords.forEach((origWord, index) => {
             if (matchedOriginalIndices.has(index)) return;
             const lowerOrigWord = origWord.toLowerCase();
@@ -209,35 +214,21 @@
         const missingWords = combinedOriginalWords.filter((_, index) => !matchedOriginalIndices.has(index));
         const excessWords = [];
         textareaWordMap.forEach(occurrences => occurrences.forEach(occ => { if (!occ.used) excessWords.push(occ.word); }));
-
-        // --- UI Update Logic ---
         const brandWords = getWords(brandPathValue.toLowerCase());
         const originalDisplayWords = getWords(originalValue);
-
-        // --- NEW HIGHLIGHTING LOGIC ---
         const newHtml = originalDisplayWords.map(word => {
             const lowerWord = word.toLowerCase();
             const isMissing = missingWords.map(w => w.toLowerCase()).includes(lowerWord);
             const isBrandWord = brandWords.includes(lowerWord);
-
             if (isMissing) {
-                if (isBrandWord) {
-                    // It's a missing word that is part of the brand. Highlight light blue.
-                    return `<span style="background-color: #d0ebff;">${escapeHtml(word)}</span>`;
-                } else {
-                    // It's a missing word from the original name (but not brand). Highlight yellow.
-                    return `<span style="background-color: #FFF3A3;">${escapeHtml(word)}</span>`;
-                }
+                return isBrandWord ? `<span style="background-color: #d0ebff;">${escapeHtml(word)}</span>` : `<span style="background-color: #FFF3A3;">${escapeHtml(word)}</span>`;
             }
-            return escapeHtml(word); // Not missing, no highlight.
+            return escapeHtml(word);
         }).join(' ');
 
         originalBTag.innerHTML = newHtml;
-        domCache.woflowBrandPathInput.style.backgroundColor = ''; // Ensure brand input is not highlighted
+        domCache.woflowBrandPathInput.style.backgroundColor = '';
 
-        // --- End of New Highlighting Logic ---
-
-        // 3. Display Excess Words
         let excessWordsDiv = document.getElementById('excess-words-display');
         if (!excessWordsDiv) {
             excessWordsDiv = document.createElement('div');
@@ -249,10 +240,9 @@
         if (excessWords.length > 0) {
             excessWordsDiv.innerHTML = `<strong>Excess Words:</strong> ${excessWords.map(escapeHtml).join(' ')}`;
         }
-
-        // 4. Highlight Cleaned Textarea
         domCache.cleanedItemNameTextarea.style.backgroundColor = (missingWords.length === 0 && excessWords.length === 0) ? 'rgba(212, 237, 218, 0.2)' : 'rgba(252, 242, 242, 0.3)';
     }
+
 
     let isTextareaListenerAttached = false;
     function runAllComparisons() {
@@ -305,13 +295,12 @@
         const inputElement = document.querySelector(`input[aria-labelledby="${comboboxId}"]`);
         if (!inputElement) return;
 
-        // Special handling to clear the dropdown
         if (valueToSelect === null || valueToSelect === undefined || valueToSelect.trim() === '') {
             const clearButton = inputElement.closest('.vs__dropdown-toggle')?.querySelector('.vs__clear');
             if (clearButton) {
                 clearButton.click();
             } else {
-                updateTextarea(inputElement, ''); // Fallback if no clear button
+                updateTextarea(inputElement, '');
             }
             return;
         }
@@ -328,7 +317,6 @@
         await delay(INTERACTION_DELAY_MS);
     }
 
-    // --- AUTO-SEARCH FUNCTION (RESTORED) ---
     async function runSearchAutomation(cleanedItemName) {
         if (!domCache.searchBoxInput || !cleanedItemName) return;
         const words = cleanedItemName.split(/\s+/).filter(Boolean);
@@ -368,54 +356,40 @@
         }
     }
 
-    // --- [MODIFIED] Helper for UOM normalization with vertical-specific logic ---
-    function normalizeUOM(uom, vertical = '') {
+    // --- [MODIFIED] UOM normalization now checks for alcohol context ---
+    function normalizeUOM(uom, isAlcohol = false) {
         const lowerUom = uom.toLowerCase();
-        const lowerVertical = vertical.toLowerCase();
 
-        // --- NEW: Alcohol-specific rule ---
-        if (lowerVertical === 'alcohol' && lowerUom === 'oz') {
+        // Alcohol-specific rule: Convert "oz" to "fl oz" if context matches
+        if (isAlcohol && lowerUom === 'oz') {
             return 'fl oz';
         }
 
-        // Rule: "6PK" should result in "ct"
-        if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct';
-        if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
-
-        // Other standard normalizations
-        if (lowerUom === 'fl oz' || lowerUom === 'floz') return 'fl oz';
+        if (['pack', 'pk', 'ct', 'count'].includes(lowerUom)) return 'ct';
+        if (['fl oz', 'floz'].includes(lowerUom)) return 'fl oz';
         if (lowerUom === 'l') return 'L';
         if (lowerUom === 'g') return 'G';
         if (lowerUom === 'ml') return 'ml';
         if (lowerUom === 'oz') return 'oz';
         if (lowerUom === 'kg') return 'kg';
         if (lowerUom === 'lb') return 'lb';
-        if (lowerUom === 'each' || lowerUom === 'ea') return 'each';
-        return lowerUom; // Return as is if not a special case
+        if (['each', 'ea'].includes(lowerUom)) return 'each';
+        return lowerUom;
     }
 
-    // --- [MODIFIED] Auto-fill Size and UOM from multiple sources, only if fields are empty ---
+    // --- [MODIFIED] Auto-fill Size and UOM with new keyword logic ---
     async function autoFillSizeAndUOM() {
         const sizeInput = domCache.woflowCleanedSizeInput;
         const uomInput = domCache.woflowCleanedUOMInput;
         if (!sizeInput || !uomInput) return;
 
-        // Check if fields are already filled. If so, do not overwrite them.
         if (sizeInput.value.trim() !== '' || uomInput.value.trim() !== '') {
-            return; // Exit function to prevent overwriting existing data
+            return;
         }
-        
-        // --- NEW: Get the current vertical ---
-        const verticalNameInput = document.querySelector('input[aria-labelledby="vs1__combobox"]');
-        const currentVertical = verticalNameInput ? verticalNameInput.value.trim() : '';
 
         const textSourcePrefixes = [
-            "Original Item Name :",
-            "Mx Provided Product Description :",
-            "Mx Provided Descriptor(s) :",
-            "Mx Provided Size 2 :",
-            "Original UOM :",
-            "Original Size :"
+            "Original Item Name :", "Mx Provided Product Description :", "Mx Provided Descriptor(s) :",
+            "Mx Provided Size 2 :", "Original UOM :", "Original Size :"
         ];
 
         let textParts = [];
@@ -423,43 +397,33 @@
             const sourceDiv = findDivByTextPrefix(prefix);
             if (sourceDiv) {
                 const text = sourceDiv.textContent.replace(prefix, '').trim();
-                if (text) {
-                    textParts.push(text);
-                }
+                if (text) textParts.push(text);
             }
         }
-
         const textToSearch = textParts.join(' ');
-        if (!textToSearch) return; // Exit if no text was found
+        if (!textToSearch) return;
+
+        // Check if the combined text contains any alcohol keywords
+        const isAlcohol = isAlcoholProduct(textToSearch);
 
         const extendedRegex = /(\d+\.?\d*)\s*(fl\s*oz|oz|ml|l|gal|pt|qt|kg|g|lb|pack|pk|case|ct|count|doz|ea|each|sq\s*ft|btl|box|can|roll|pr|pair|ctn|bag|servings|bunch|by\s*pound)\b/ig;
-
         let matches = [];
         let match;
         while ((match = extendedRegex.exec(textToSearch)) !== null) {
-            matches.push({
-                size: match[1],
-                uom: match[2] // Store raw UOM to be normalized later
-            });
+            matches.push({ size: match[1], uom: match[2] });
         }
 
-        // Apply logic based on the number of matches found
         if (matches.length > 1) {
-            // --- RULE 1: Multiple size + UOM pairs ---
-            const combinedString = matches.map(m => `${m.size} ${normalizeUOM(m.uom, currentVertical)}`).join(' x ');
+            const combinedString = matches.map(m => `${m.size} ${normalizeUOM(m.uom, isAlcohol)}`).join(' x ');
             updateTextarea(sizeInput, combinedString);
-            await fillDropdown("vs7__combobox", ''); // Clear the UOM field
-
+            await fillDropdown("vs7__combobox", '');
         } else if (matches.length === 1) {
-            // --- RULE 2: Single size + UOM pair ---
             const singleMatch = matches[0];
-            updateTextarea(sizeInput, singleMatch.size); // Number only in Size field
-            await fillDropdown("vs7__combobox", normalizeUOM(singleMatch.uom, currentVertical)); // Unit in UOM field
-
+            updateTextarea(sizeInput, singleMatch.size);
+            await fillDropdown("vs7__combobox", normalizeUOM(singleMatch.uom, isAlcohol));
         } else {
-            // --- RULE 3: No size + UOM pairs found ---
-            updateTextarea(sizeInput, ''); // Clear Size field
-            await fillDropdown("vs7__combobox", ''); // Clear UOM field
+            updateTextarea(sizeInput, '');
+            await fillDropdown("vs7__combobox", '');
         }
         await delay(INTERACTION_DELAY_MS);
     }
@@ -478,32 +442,32 @@
     runAllComparisons();
     const matchedSheetRow = await processGoogleSheetData();
 
-    // Call the updated auto-fill function for Size and UOM
-    await autoFillSizeAndUOM();
+    // The order is important: fill from sheet first, then parse size/UOM
+    if (matchedSheetRow) {
+        const dropdownConfigurations = [
+            { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() },
+            { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
+            { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() },
+            { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
+            { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() },
+            { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
+            { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() },
+            { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
+            { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
+        ];
 
-    if (!matchedSheetRow) return;
-
-    const dropdownConfigurations = [
-        { id: "vs1__combobox", value: matchedSheetRow?.["Vertical Name"]?.trim() }, { id: "vs2__combobox", value: matchedSheetRow?.vs2?.trim() },
-        { id: "vs3__combobox", value: matchedSheetRow?.vs3?.trim() }, { id: "vs4__combobox", value: matchedSheetRow?.vs4?.trim() || "No Error" },
-        { id: "vs5__combobox", value: matchedSheetRow?.vs5?.trim() }, { id: "vs6__combobox", value: matchedSheetRow?.vs6?.trim() },
-        // vs7 is now primarily handled by autoFillSizeAndUOM, this line becomes a fallback
-        { id: "vs7__combobox", value: matchedSheetRow?.vs7?.trim() },
-        { id: "vs8__combobox", value: matchedSheetRow?.vs8?.trim() },
-        { id: "vs17__combobox", value: matchedSheetRow?.vs17?.trim() || "Yes" }
-    ];
-
-    for (const { id, value } of dropdownConfigurations) {
-        // Only fill if there is a value to prevent overriding autoFillSizeAndUOM
-        if (value) {
-            await fillDropdown(id, value);
+        for (const { id, value } of dropdownConfigurations) {
+            if (value) {
+                await fillDropdown(id, value);
+            }
         }
     }
+    
+    await autoFillSizeAndUOM();
 
     if (domCache.woflowBrandPathInput && domCache.woflowBrandPathInput.value.trim() === "") {
         updateTextarea(domCache.woflowBrandPathInput, "Brand Not Available");
     }
-    // --- RUN AUTO-SEARCH (RESTORED) ---
     if (domCache.cleanedItemNameTextarea) {
         await runSearchAutomation(domCache.cleanedItemNameTextarea.value.trim());
     }
