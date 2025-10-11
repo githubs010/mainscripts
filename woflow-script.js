@@ -373,7 +373,7 @@
         const lowerUom = uom.toLowerCase();
         const lowerVertical = vertical.toLowerCase();
 
-        // --- CHANGE: Use startsWith for a more flexible check ---
+        // --- FIX: Use startsWith for a more flexible and reliable check ---
         if (lowerVertical.startsWith('alcohol') && lowerUom === 'oz') {
             return 'fl oz';
         }
