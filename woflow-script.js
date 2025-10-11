@@ -368,9 +368,16 @@
         }
     }
 
-    // --- [MODIFIED] Helper for UOM normalization ---
-    function normalizeUOM(uom) {
+    // --- [MODIFIED] Helper for UOM normalization with vertical-specific logic ---
+    function normalizeUOM(uom, vertical = '') {
         const lowerUom = uom.toLowerCase();
+        const lowerVertical = vertical.toLowerCase();
+
+        // --- NEW: Alcohol-specific rule ---
+        if (lowerVertical === 'alcohol' && lowerUom === 'oz') {
+            return 'fl oz';
+        }
+
         // Rule: "6PK" should result in "ct"
         if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct';
         if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
@@ -397,8 +404,11 @@
         if (sizeInput.value.trim() !== '' || uomInput.value.trim() !== '') {
             return; // Exit function to prevent overwriting existing data
         }
+        
+        // --- NEW: Get the current vertical ---
+        const verticalNameInput = document.querySelector('input[aria-labelledby="vs1__combobox"]');
+        const currentVertical = verticalNameInput ? verticalNameInput.value.trim() : '';
 
-        // --- NEW: Define all text sources to search for size/UOM ---
         const textSourcePrefixes = [
             "Original Item Name :",
             "Mx Provided Product Description :",
@@ -412,7 +422,6 @@
         for (const prefix of textSourcePrefixes) {
             const sourceDiv = findDivByTextPrefix(prefix);
             if (sourceDiv) {
-                // Extract text content after the prefix label
                 const text = sourceDiv.textContent.replace(prefix, '').trim();
                 if (text) {
                     textParts.push(text);
@@ -437,7 +446,7 @@
         // Apply logic based on the number of matches found
         if (matches.length > 1) {
             // --- RULE 1: Multiple size + UOM pairs ---
-            const combinedString = matches.map(m => `${m.size} ${normalizeUOM(m.uom)}`).join(' x ');
+            const combinedString = matches.map(m => `${m.size} ${normalizeUOM(m.uom, currentVertical)}`).join(' x ');
             updateTextarea(sizeInput, combinedString);
             await fillDropdown("vs7__combobox", ''); // Clear the UOM field
 
@@ -445,7 +454,7 @@
             // --- RULE 2: Single size + UOM pair ---
             const singleMatch = matches[0];
             updateTextarea(sizeInput, singleMatch.size); // Number only in Size field
-            await fillDropdown("vs7__combobox", normalizeUOM(singleMatch.uom)); // Unit in UOM field
+            await fillDropdown("vs7__combobox", normalizeUOM(singleMatch.uom, currentVertical)); // Unit in UOM field
 
         } else {
             // --- RULE 3: No size + UOM pairs found ---
