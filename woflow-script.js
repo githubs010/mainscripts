@@ -387,7 +387,7 @@
         return lowerUom; // Return as is if not a special case
     }
 
-    // --- [REPLACED] Auto-fill Size and UOM based on specific rules ---
+    // --- [MODIFIED] Auto-fill Size and UOM only if the fields are empty ---
     async function autoFillSizeAndUOM() {
         const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
         if (!originalItemNameDiv) return;
@@ -396,7 +396,14 @@
         if (!originalItemNameText) return;
 
         const sizeInput = domCache.woflowCleanedSizeInput;
-        if (!sizeInput) return;
+        const uomInput = domCache.woflowCleanedUOMInput;
+        if (!sizeInput || !uomInput) return;
+
+        // --- CHANGE: Check if fields are already filled. If so, do not overwrite them. ---
+        if (sizeInput.value.trim() !== '' || uomInput.value.trim() !== '') {
+            return; // Exit function to prevent overwriting existing data
+        }
+        // --- END CHANGE ---
 
         const extendedRegex = /(\d+\.?\d*)\s*(fl\s*oz|oz|ml|l|gal|pt|qt|kg|g|lb|pack|pk|case|ct|count|doz|ea|each|sq\s*ft|btl|box|can|roll|pr|pair|ctn|bag|servings|bunch|by\s*pound)\b/ig;
 
