@@ -368,13 +368,13 @@
         }
     }
 
-    // --- [MODIFIED] Helper for UOM normalization with vertical-specific logic ---
+    // --- [CORRECTED] Helper for UOM normalization with vertical-specific logic ---
     function normalizeUOM(uom, vertical = '') {
         const lowerUom = uom.toLowerCase();
         const lowerVertical = vertical.toLowerCase();
 
-        // --- NEW: Alcohol-specific rule ---
-        if (lowerVertical === 'alcohol' && lowerUom === 'oz') {
+        // --- CHANGE: Use startsWith for a more flexible check ---
+        if (lowerVertical.startsWith('alcohol') && lowerUom === 'oz') {
             return 'fl oz';
         }
 
@@ -405,7 +405,7 @@
             return; // Exit function to prevent overwriting existing data
         }
 
-        // --- NEW: Get the current vertical ---
+        // --- Get the current vertical ---
         const verticalNameInput = document.querySelector('input[aria-labelledby="vs1__combobox"]');
         const currentVertical = verticalNameInput ? verticalNameInput.value.trim() : '';
 
