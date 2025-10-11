@@ -151,7 +151,7 @@
         }
         return suggestions;
     }
-    
+
     // --- FINAL: Full comparison logic with differentiated highlighting ---
     function runSmartComparison() {
         if (!isHighlightingEnabled || isUpdatingComparison) return;
@@ -213,7 +213,7 @@
         // --- UI Update Logic ---
         const brandWords = getWords(brandPathValue.toLowerCase());
         const originalDisplayWords = getWords(originalValue);
-        
+
         // --- NEW HIGHLIGHTING LOGIC ---
         const newHtml = originalDisplayWords.map(word => {
             const lowerWord = word.toLowerCase();
@@ -234,9 +234,9 @@
 
         originalBTag.innerHTML = newHtml;
         domCache.woflowBrandPathInput.style.backgroundColor = ''; // Ensure brand input is not highlighted
-        
+
         // --- End of New Highlighting Logic ---
-        
+
         // 3. Display Excess Words
         let excessWordsDiv = document.getElementById('excess-words-display');
         if (!excessWordsDiv) {
@@ -315,7 +315,7 @@
             }
             return;
         }
-        
+
         inputElement.focus();
         inputElement.click();
         inputElement.value = valueToSelect;
@@ -327,7 +327,7 @@
         }
         await delay(INTERACTION_DELAY_MS);
     }
-    
+
     // --- AUTO-SEARCH FUNCTION (RESTORED) ---
     async function runSearchAutomation(cleanedItemName) {
         if (!domCache.searchBoxInput || !cleanedItemName) return;
@@ -374,7 +374,7 @@
         // Rule: "6PK" should result in "ct"
         if (lowerUom === 'pack' || lowerUom === 'pk') return 'ct';
         if (lowerUom === 'ct' || lowerUom === 'count') return 'ct';
-        
+
         // Other standard normalizations
         if (lowerUom === 'fl oz' || lowerUom === 'floz') return 'fl oz';
         if (lowerUom === 'l') return 'L';
@@ -387,29 +387,47 @@
         return lowerUom; // Return as is if not a special case
     }
 
-    // --- [MODIFIED] Auto-fill Size and UOM only if the fields are empty ---
+    // --- [MODIFIED] Auto-fill Size and UOM from multiple sources, only if fields are empty ---
     async function autoFillSizeAndUOM() {
-        const originalItemNameDiv = findDivByTextPrefix("Original Item Name :");
-        if (!originalItemNameDiv) return;
-
-        const originalItemNameText = originalItemNameDiv.querySelector("b")?.textContent.trim();
-        if (!originalItemNameText) return;
-
         const sizeInput = domCache.woflowCleanedSizeInput;
         const uomInput = domCache.woflowCleanedUOMInput;
         if (!sizeInput || !uomInput) return;
 
-        // --- CHANGE: Check if fields are already filled. If so, do not overwrite them. ---
+        // Check if fields are already filled. If so, do not overwrite them.
         if (sizeInput.value.trim() !== '' || uomInput.value.trim() !== '') {
             return; // Exit function to prevent overwriting existing data
         }
-        // --- END CHANGE ---
+
+        // --- NEW: Define all text sources to search for size/UOM ---
+        const textSourcePrefixes = [
+            "Original Item Name :",
+            "Mx Provided Product Description :",
+            "Mx Provided Descriptor(s) :",
+            "Mx Provided Size 2 :",
+            "Original UOM :",
+            "Original Size :"
+        ];
+
+        let textParts = [];
+        for (const prefix of textSourcePrefixes) {
+            const sourceDiv = findDivByTextPrefix(prefix);
+            if (sourceDiv) {
+                // Extract text content after the prefix label
+                const text = sourceDiv.textContent.replace(prefix, '').trim();
+                if (text) {
+                    textParts.push(text);
+                }
+            }
+        }
+
+        const textToSearch = textParts.join(' ');
+        if (!textToSearch) return; // Exit if no text was found
 
         const extendedRegex = /(\d+\.?\d*)\s*(fl\s*oz|oz|ml|l|gal|pt|qt|kg|g|lb|pack|pk|case|ct|count|doz|ea|each|sq\s*ft|btl|box|can|roll|pr|pair|ctn|bag|servings|bunch|by\s*pound)\b/ig;
 
         let matches = [];
         let match;
-        while ((match = extendedRegex.exec(originalItemNameText)) !== null) {
+        while ((match = extendedRegex.exec(textToSearch)) !== null) {
             matches.push({
                 size: match[1],
                 uom: match[2] // Store raw UOM to be normalized later
@@ -468,7 +486,7 @@
 
     for (const { id, value } of dropdownConfigurations) {
         // Only fill if there is a value to prevent overriding autoFillSizeAndUOM
-        if (value) { 
+        if (value) {
             await fillDropdown(id, value);
         }
     }
